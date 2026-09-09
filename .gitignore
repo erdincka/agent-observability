@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Node
+node_modules/
+.next/
+dist/
+
+# Secrets — never commit rendered values
+*.env
+.env.*
+!.env.example
+secrets/
+*-secret.yaml
+!*-secret.example.yaml
+kubeconfig*
+*.pem
+*.key
+
+# Local tooling
+.DS_Store
+.idea/
+.vscode/
+*.log
+
+# Helm
+charts/**/charts/
+*.tgz
