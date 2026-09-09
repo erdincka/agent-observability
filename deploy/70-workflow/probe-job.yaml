@@ -1,0 +1,28 @@
+# Runs the throwaway single-node graph once, to prove a trace that STARTS in the
+# workflow reaches ClickHouse with the gateway's spans nested inside it.
+#
+# A Job rather than a Deployment because this is a one-shot proof, not a service.
+# The real workflow's deployment shape is a step 5 question.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: workflow-probe
+  namespace: agent-obs-app
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: workflow
+          image: 10.1.1.240:5000/agent-obs/workflow:0.1.0
+          args: ["--probe"]
+          env:
+            - { name: OTEL_SERVICE_NAME, value: "triage-workflow" }
+            - name: GATEWAY_API_KEY
+              valueFrom: { secretKeyRef: { name: gateway-auth, key: GATEWAY_API_KEY } }
+            - name: POSTGRES_DSN
+              valueFrom: { secretKeyRef: { name: workflow-db-app, key: uri } }
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits:   { cpu: "1",  memory: 1Gi }

@@ -118,6 +118,104 @@ make the gap invisible and permanent.
 `gen_ai.request.model` as the requested alias. Worth opening as an issue first to check
 whether the current behaviour is deliberate.
 
+### 4. OpenLIT SDK — `capture_message_content` defaults to True, against the semconv default
+
+**Project:** [openlit/openlit](https://github.com/openlit/openlit) (Python SDK)
+**Status:** Found while writing the workflow scaffold, phase 1 step 4, 2026-09-09. Not filed.
+
+`openlit.init()` signature, `sdk/python/src/openlit/__init__.py`:
+
+```python
+def init(
+    environment="default",
+    application_name="default",
+    ...
+    capture_message_content=True,     # <- prompts and completions captured unless told otherwise
+```
+
+The OpenTelemetry GenAI semantic conventions specify the opposite default: content capture
+is opt-in, with `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT` defaulting to
+`no_content`. LiteLLM follows the spec and documents "prompts and responses are not
+captured unless you explicitly opt in". OpenLIT's SDK inverts it.
+
+**The failure mode is specific and quiet, and this lab is exactly the configuration that
+produces it.** Route model calls through a LiteLLM gateway that is correctly configured for
+`no_content`, then instrument the calling application with OpenLIT using its documented
+one-line init. The gateway spans are clean. The SDK spans, emitted from inside the
+application and sent to the same collector and the same ClickHouse, contain the full prompt
+and completion. An operator who verified the gateway's posture — the component whose whole
+job is being the policy boundary — would reasonably conclude content is not being stored,
+and be wrong. Nothing warns them; both sets of spans land in `otel_traces` side by side.
+
+For the regulated enterprises this project models, that is the difference between a control
+and the appearance of one.
+
+**What we did instead:** set `capture_message_content=False` explicitly in
+`apps/workflow/src/workflow/telemetry.py`, with a comment explaining why the explicit
+argument is load-bearing rather than decorative.
+
+**Contribution type:** starts as an issue, because the fix is a judgement call rather than
+an obvious patch. Options worth putting to the maintainers: flip the default to match the
+spec (breaking, but in the safe direction); honour
+`OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT` when it is set, which is
+non-breaking and probably the right first step; or, at minimum, document the divergence
+prominently. The interaction with a `no_content` gateway is worth spelling out either way —
+it is not obvious, and the people most likely to hit it are the ones who care most.
+
+### 5. GenAI semconv — nothing distinguishes a gateway's span for a model call from the client's span for the same call
+
+**Projects:** [OTel GenAI semantic conventions](https://github.com/open-telemetry/semantic-conventions),
+touching [openlit](https://github.com/openlit/openlit) and [litellm](https://github.com/BerriAI/litellm).
+**Status:** Observed in phase 1 step 4, 2026-09-09. Not yet filed. Probably the most
+practically consequential finding so far, because it produces wrong numbers silently.
+
+One model call through this stack yields **two spans that both describe it**:
+
+```
+triage-workflow  chat local   gen_ai.usage.input_tokens=36  gen_ai.usage.output_tokens=2  gen_ai.usage.cost=0
+litellm-gateway  chat local   gen_ai.usage.input_tokens=36  gen_ai.usage.output_tokens=2  litellm.cost.total=0
+```
+
+The OpenLIT SDK instruments the OpenAI client inside the application. LiteLLM instruments
+the gateway. Neither is wrong, and both are doing what their documentation says. But the
+obvious aggregation over a trace —
+
+```sql
+SELECT sum(toUInt64OrZero(v)) FROM otel_traces
+ARRAY JOIN mapKeys(SpanAttributes) AS k, mapValues(SpanAttributes) AS v
+WHERE TraceId = ... AND k = 'gen_ai.usage.input_tokens'
+```
+
+— returns **72 for a 36-token call**. Exactly double, with nothing in the data to indicate
+it. Add a second gateway hop or a retry and the factor changes rather than staying a
+predictable two, so it cannot even be divided out reliably.
+
+The conventions give a span `gen_ai.operation.name = chat` in both places. There is no
+attribute saying "this span is a relay of an operation another span already reports" —
+no equivalent of a proxy or intermediary marker. A consumer cannot tell the difference
+between two spans describing one call and two spans describing two calls, which is exactly
+the distinction cost attribution depends on.
+
+**Secondary observation, same root:** the two components report the same concept under
+different keys — `gen_ai.usage.cost` from the SDK, `litellm.cost.total` from the gateway.
+The semconv has no cost attribute at all, so every implementer invents one. For a project
+whose phase 2 is spend attribution per agent, that is a gap worth raising in its own right.
+
+**Why it matters here specifically:** phase 2's claim is per-agent cost and token
+attribution for audit. Built naively on this data, every figure would be inflated by a
+factor that depends on how many instrumented hops a call happened to traverse — and it
+would look completely plausible.
+
+**What we did instead:** nothing yet. Recorded before writing any query that works around
+it, because the workaround (filtering by `ServiceName`, or picking the innermost span) is
+local, fragile, and would hide the gap permanently.
+
+**Contribution type:** issue against the semantic conventions proposing a way to mark a
+span as an intermediary's view of an operation reported elsewhere. Possibly also an issue
+against each of OpenLIT and LiteLLM once the convention question has an answer. This is the
+kind of gap the brief predicted would show up at the multi-agent and gateway boundaries,
+and it showed up at the very first one.
+
 ## Watch list
 
 Carried from the project brief. These are suspected gaps to verify, not findings:

@@ -1,0 +1,29 @@
+# PostgreSQL for the workflow's own state — LangGraph checkpoints and thread
+# history. Not telemetry: traces go to ClickHouse, and conflating the two is how
+# an audit trail ends up depending on application state that gets migrated away.
+#
+# Uses the CloudNativePG operator, which was already installed in this lab. A
+# CNPG Cluster is about fifteen lines against a StatefulSet's eighty, and it
+# handles the failover, backup hooks and credential rotation we would otherwise
+# have to pretend we had.
+#
+# Lives in agent-obs-app, not agent-obs-platform: it is the workload's state, and
+# the platform/app split is drawn where phase 2's governance boundary will run.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: workflow-db
+  namespace: agent-obs-app
+spec:
+  instances: 1
+  # CNPG generates the credentials and publishes them as the Secret
+  # `workflow-db-app`. No password is authored anywhere in this repo.
+  bootstrap:
+    initdb:
+      database: workflow
+      owner: workflow
+  storage:
+    size: 10Gi
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits:   { cpu: "2",  memory: 2Gi }

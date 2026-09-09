@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Build and push an image on the pve Docker host.
+#
+# The workstation driving this project is arm64 macOS; the cluster is amd64.
+# Building locally produces images that will not run, and the failure surfaces
+# as a confusing exec-format error inside the pod rather than at build time.
+# The pve context is a native x86_64 host, so this is a native build, not an
+# emulated one.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+APP="${1:?usage: build-image.sh <app-dir-name> [tag]}"
+TAG="${2:-0.1.0}"
+REGISTRY="10.1.1.240:5000"
+IMAGE="${REGISTRY}/agent-obs/${APP}:${TAG}"
+
+echo "==> building ${IMAGE} on docker context pve (native amd64)"
+docker --context pve build -t "${IMAGE}" "apps/${APP}"
+
+echo "==> pushing to the in-cluster registry"
+docker --context pve push "${IMAGE}"
+
+echo "==> ${IMAGE}"

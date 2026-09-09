@@ -96,6 +96,12 @@ config:
         receivers: [otlp]
         processors: [memory_limiter, batch]
         exporters: [clickhouse, debug]
-      # Metrics are received but not yet stored. Prometheus already exists in
-      # this lab and GenAI metrics are not what phase 1 is proving.
-      metrics: null
+      # Enabled after step 4, not before. Nulling metrics meant the OpenLIT SDK
+      # got a 404 from /v1/metrics on every single workflow run — a permanent
+      # error line that would eventually mask a real one. ClickHouse already has
+      # the otel_metrics_* tables (OpenLIT created them), so accepting metrics
+      # costs nothing and removes the noise.
+      metrics:
+        receivers: [otlp]
+        processors: [memory_limiter, batch]
+        exporters: [clickhouse]

@@ -42,6 +42,11 @@ secrets: env-check ## Render .env into Kubernetes Secrets (never committed)
 		--from-literal=OLLAMA_BASE_URL="$$OLLAMA_BASE_URL" \
 		--from-literal=OPENROUTER_API_KEY="$$OPENROUTER_API_KEY" \
 		--dry-run=client -o yaml | kubectl apply -f -
+	@set -a; . ./.env; set +a; \
+	kubectl create secret generic gateway-auth \
+		--namespace $(APP_NS) \
+		--from-literal=GATEWAY_API_KEY="$$LITELLM_MASTER_KEY" \
+		--dry-run=client -o yaml | kubectl apply -f -
 
 .PHONY: clickhouse
 clickhouse: ## Deploy ClickHouse (hot store)
@@ -125,3 +130,19 @@ litellm-logs: ## Tail the LiteLLM gateway
 
 .PHONY: step3
 step3: ollama ollama-pull litellm ## Everything in step 3
+
+.PHONY: postgres
+postgres: ## Deploy the workflow's PostgreSQL (CloudNativePG)
+	kubectl apply -f deploy/60-postgres/cluster.yaml
+	kubectl wait --for=condition=Ready cluster/workflow-db -n $(APP_NS) --timeout=300s
+
+.PHONY: workflow-image
+workflow-image: ## Build and push the workflow image on the pve context
+	./scripts/build-image.sh workflow
+
+.PHONY: workflow-probe
+workflow-probe: ## Run the plumbing proof: a trace starting in the workflow
+	-kubectl delete job workflow-probe -n $(APP_NS) --ignore-not-found
+	kubectl apply -f deploy/70-workflow/probe-job.yaml
+	kubectl wait --for=condition=complete job/workflow-probe -n $(APP_NS) --timeout=600s
+	kubectl logs -n $(APP_NS) job/workflow-probe

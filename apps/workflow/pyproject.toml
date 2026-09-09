@@ -1,0 +1,21 @@
+[project]
+name = "workflow"
+version = "0.1.0"
+description = "Incident-triage LangGraph workflow — a vehicle for telemetry, not a product"
+requires-python = ">=3.12"
+dependencies = [
+    "langgraph>=0.2",
+    "langgraph-checkpoint-postgres>=2.0",
+    "langchain-openai>=0.2",
+    "psycopg[binary,pool]>=3.2",
+    "openlit>=1.34",
+    "mcp>=1.2",
+    "httpx>=0.27",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/workflow"]
