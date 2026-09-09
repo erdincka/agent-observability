@@ -68,6 +68,44 @@ spec:
             #   no_content | span_only | event_only | span_and_event
             - { name: OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT, value: "no_content" }
 
+            # --- state ------------------------------------------------------
+            # LiteLLM is stateless for routing and stateful for identity. The
+            # admin UI authenticates against a users table, so without this the
+            # proxy proxies fine and every login returns
+            # "Authentication Error, Not connected to DB!".
+            #
+            # CNPG publishes `uri` as a ready-made connection string, so the
+            # gateway and the database agree on the credential by construction
+            # rather than by two copies being kept in step.
+            - name: DATABASE_URL
+              valueFrom: { secretKeyRef: { name: litellm-db-app, key: uri } }
+
+            # Encrypts provider credentials at rest in that database. It
+            # defaults to the master key, which quietly couples key rotation to
+            # data readability: rotate LITELLM_MASTER_KEY and every stored
+            # credential becomes undecryptable, with no error until something
+            # tries to use one. Separate value, rotated on its own schedule.
+            - name: LITELLM_SALT_KEY
+              valueFrom: { secretKeyRef: { name: litellm-auth, key: LITELLM_SALT_KEY } }
+
+            # UI login. Without these the username is `admin` and the password
+            # is the master key — i.e. the credential that grants full API
+            # access is also typed into a browser form. Splitting them means a
+            # UI password can be handed out without handing out the API.
+            - name: UI_USERNAME
+              valueFrom: { secretKeyRef: { name: litellm-auth, key: LITELLM_UI_USERNAME } }
+            - name: UI_PASSWORD
+              valueFrom: { secretKeyRef: { name: litellm-auth, key: LITELLM_UI_PASSWORD } }
+
+            # Deliberately false. With this on, models added through the UI are
+            # persisted in Postgres and merged with the rendered config.yaml —
+            # two sources of truth for the model list, one of them invisible to
+            # this repository. Step 3 already cost an hour to a config and its
+            # secret being applied by different commands; this is the same trap
+            # with a database in it. The model list comes from .env, or it does
+            # not come from anywhere.
+            - { name: STORE_MODEL_IN_DB, value: "false" }
+
             # --- routing ----------------------------------------------------
             - name: OLLAMA_BASE_URL
               valueFrom: { secretKeyRef: { name: litellm-auth, key: OLLAMA_BASE_URL } }
@@ -81,9 +119,18 @@ spec:
           resources:
             requests: { cpu: 100m, memory: 512Mi }
             limits:   { cpu: "2",  memory: 2Gi }
-          readinessProbe:
+          # First boot runs the Prisma schema migration against an empty
+          # database before the port answers anything. A readiness probe alone
+          # would mark the pod unready and `rollout status` would fail on a
+          # deploy that is merely slow. The startup probe holds the door open
+          # for up to five minutes; readiness stays tight once it is through.
+          startupProbe:
             httpGet: { path: /health/liveliness, port: 4000 }
             initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 30
+          readinessProbe:
+            httpGet: { path: /health/liveliness, port: 4000 }
             periodSeconds: 10
       volumes:
         - name: config

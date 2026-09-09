@@ -1,0 +1,41 @@
+# PostgreSQL for the LiteLLM gateway's own state.
+#
+# Why this exists at all: LiteLLM's admin UI is not a view over the config file.
+# Logging in authenticates against a users table, so with no database the proxy
+# serves model traffic perfectly well and answers every UI request with
+#
+#   litellm.proxy._types.ProxyException: Authentication Error, Not connected to DB!
+#
+# The gateway is stateless for *routing* and stateful for *identity*. Phase 1
+# only needs the second half to make the UI usable, but it is the same table set
+# phase 2's virtual keys, teams and budgets live in — so this is groundwork, not
+# a detour.
+#
+# A SECOND cluster rather than a second database inside `workflow-db`, on
+# purpose. workflow-db is in agent-obs-app and holds the *workload's* state;
+# this is platform state and belongs on the platform side of the split that
+# phase 2's governance boundary runs along. Sharing one instance would put an
+# app-namespace credential in front of the gateway's identity store, which is
+# exactly the coupling the namespace split exists to prevent.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: litellm-db
+  namespace: agent-obs-platform
+spec:
+  instances: 1
+  # CNPG generates the credentials and publishes them as the Secret
+  # `litellm-db-app`, whose `uri` key is already a well-formed connection
+  # string. No password is authored anywhere in this repo.
+  bootstrap:
+    initdb:
+      database: litellm
+      owner: litellm
+  storage:
+    # local-path cannot expand volumes after the fact (see step 1 in
+    # LEARNINGS.md), so this is sized once. LiteLLM's tables are keys, users,
+    # teams and a spend log — small, but the spend log grows per request.
+    size: 10Gi
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits:   { cpu: "2",  memory: 2Gi }
