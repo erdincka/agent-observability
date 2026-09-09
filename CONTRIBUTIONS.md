@@ -43,6 +43,42 @@ target in this project.
 a ClickHouse TraceQuery is wanted and what trace schema it should assume (the OTel
 `clickhouseexporter` `otel_traces` layout being the obvious candidate), before writing code.
 
+### 2. OpenLIT — the ClickHouse schema contract with an existing Collector is undocumented
+
+**Project:** [openlit/openlit](https://github.com/openlit/openlit)
+**Status:** Hit during phase 1 step 2, 2026-09-09. Not yet filed.
+
+OpenLIT's docs state that you "can reuse your existing infrastructure" and connect it to an
+existing ClickHouse and OTel Collector. They do not state **which tables it expects**, that
+it **creates and verifies the `otel_*` schema itself on startup**, or what happens when
+those tables already exist because a Collector created them first.
+
+We had to read `src/client/src/lib/platform/common.ts` to find the answer:
+
+```ts
+export const OTEL_TRACES_TABLE_NAME = "otel_traces";
+export const OTEL_LOGS_TABLE_NAME = "otel_logs";
+```
+
+Having to read application source to learn the integration contract is the gap. Anyone
+wiring OpenLIT to an existing pipeline needs exactly these two facts and cannot get them
+from the documentation.
+
+**What we did instead:** deployed the Collector first so its `clickhouseexporter` owned
+schema creation, then pointed OpenLIT at the same database. It coexisted cleanly — OpenLIT
+added 36 `openlit_*` tables and left `otel_traces` untouched.
+
+**Why it still matters:** the deploy order is load-bearing and nothing says so. Deploy
+OpenLIT first and it creates `otel_*` to its own definition, after which the Collector's
+exporter must accept whatever it finds. Two orders, two possible schemas, no documentation
+either way. Also worth noting: OpenLIT created five `otel_metrics_*` tables even though our
+Collector has no metrics pipeline, so it provisions for a writer that may never arrive.
+
+**Contribution type:** docs fix — a short "connecting to an existing OTel Collector"
+section naming the expected tables, stating that OpenLIT creates them if absent, and
+recommending an order. Low effort, high value, and a natural first contribution to this
+project.
+
 ## Watch list
 
 Carried from the project brief. These are suspected gaps to verify, not findings:
@@ -50,7 +86,7 @@ Carried from the project brief. These are suspected gaps to verify, not findings
 | Project | Suspected gap | Verify by |
 | :- | :- | :- |
 | LangGraph | OpenTelemetry instrumentation known to be incomplete upstream | Phase 1, step 7 |
-| OpenLIT | Instrumentation coverage — which spans we still hand-roll | Phase 1, step 7 |
+| OpenLIT | Instrumentation coverage — which spans we still hand-roll | Phase 1, step 7 (schema-contract gap already promoted to item 2) |
 | OTel GenAI semconv | Cannot express multi-agent handoff semantics | Phase 1, step 7 |
 | LiteLLM | GenAI semconv coverage where it meets MCP tool calls | Phase 1, step 8 |
 | ~~Perses~~ | ~~ClickHouse trace-query SDK missing~~ | **Verified — promoted to Open, item 1** |

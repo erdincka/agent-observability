@@ -1,0 +1,43 @@
+# OpenLIT — GenAI UI over ClickHouse. Emphatically NOT part of the write path.
+#
+# The chart's defaults would deploy its own ClickHouse and, optionally, its own
+# OpAMP-managed collector. Both are disabled. This is the single most important
+# configuration decision in phase 1: phase 2 places redaction, routing and tail
+# sampling in the OTel Collector, and that is only enforceable if the Collector
+# is the only thing writing to storage. If OpenLIT ingested telemetry directly it
+# would bypass the governance control point this project exists to demonstrate.
+#
+# OpenLIT reads `otel_traces` and `otel_logs` — the same table names the
+# Collector's clickhouseexporter writes. That shared naming is the entire
+# contract between the two halves.
+#
+# chart: openlit/openlit 1.24.0
+
+# Default is LoadBalancer, which would consume one of the ten addresses in the
+# MetalLB pool. Exposed through the existing Envoy Gateway instead.
+service:
+  type: ClusterIP
+
+# Use the ClickHouse deployed in 10-clickhouse, not a second one.
+clickhouse:
+  enabled: false
+
+# The OpAMP-managed collector. Off — see the note above.
+openlit-controller:
+  enabled: false
+
+config:
+  # Reuses the same Secret the Collector reads, so the credential exists in
+  # exactly one place and no password is written into this file.
+  secret:
+    name: clickhouse-auth
+    usernameKey: CLICKHOUSE_USER
+    passwordKey: CLICKHOUSE_PASSWORD
+  database:
+    name: otel
+    host: clickhouse.agent-obs-platform.svc.cluster.local
+    port: "8123"
+
+persistence:
+  enabled: true
+  size: 5Gi

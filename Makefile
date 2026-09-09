@@ -8,6 +8,7 @@ SHELL := /bin/bash
 PLATFORM_NS := agent-obs-platform
 APP_NS      := agent-obs-app
 COLLECTOR_CHART_VERSION := 0.172.1
+OPENLIT_CHART_VERSION   := 1.24.0
 
 .DEFAULT_GOAL := help
 
@@ -72,3 +73,19 @@ collector-logs: ## Tail the Collector
 
 .PHONY: step1
 step1: namespaces secrets clickhouse collector smoke-trace ## Everything in step 1, in order
+
+.PHONY: openlit
+openlit: ## Deploy the OpenLIT UI over our ClickHouse
+	helm upgrade --install openlit openlit/openlit \
+		--version $(OPENLIT_CHART_VERSION) \
+		--namespace $(PLATFORM_NS) \
+		--values deploy/30-openlit/values.yaml \
+		--wait --timeout 5m
+	kubectl apply -f deploy/30-openlit/httproute.yaml
+
+.PHONY: openlit-logs
+openlit-logs: ## Tail OpenLIT
+	kubectl logs -n $(PLATFORM_NS) -l app.kubernetes.io/name=openlit -f --tail=100
+
+.PHONY: step2
+step2: openlit ## Everything in step 2
