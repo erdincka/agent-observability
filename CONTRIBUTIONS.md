@@ -222,6 +222,55 @@ against each of OpenLIT and LiteLLM once the convention question has an answer. 
 kind of gap the brief predicted would show up at the multi-agent and gateway boundaries,
 and it showed up at the very first one.
 
+### 6. OpenLIT — the logs tab ships without its API routes, so the page cannot load at all
+
+**Project:** [openlit/openlit](https://github.com/openlit/openlit)
+**Status:** Hit 2026-09-09 on chart/app **1.24.0** (the current release). Not yet filed.
+
+`/telemetry?tab=logs` fails immediately in the browser with:
+
+```
+Unexpected token '<', "<!DOCTYPE "... is not valid JSON
+```
+
+That message is the symptom of a `fetch()` receiving Next.js's 404 **HTML** page and
+handing it to `response.json()`. The cause is that the client bundle calls three endpoints
+that do not exist in the build:
+
+```
+/api/telemetry/logs                  <- the log list; this is the one that breaks the page
+/api/telemetry/logs/config
+/api/telemetry/logs/attribute-keys
+```
+
+Next.js's own routing table is unambiguous — `.next/server/app-paths-manifest.json`
+contains, under `/api/telemetry/`, only:
+
+```
+/api/telemetry/metrics/route          /api/telemetry/metrics/[name]/route
+/api/telemetry/metrics/attribute-keys/route
+/api/telemetry/metrics/config/route   /api/telemetry/summary/[signal]/route
+```
+
+There is no `logs` segment, and `routes-manifest.json` declares no rewrites, so nothing
+maps those paths onto another handler. The metrics tab has the full trio; the logs tab has
+none of them. `/api/telemetry/summary/logs` *does* resolve — via the generic
+`summary/[signal]` route — which is why the tab renders its summary strip before dying on
+the list.
+
+**This is not a configuration problem.** It is independent of ClickHouse, of the Collector,
+of whether `otel_logs` exists or has rows, and of how the UI is exposed. The route is
+absent from the shipped artefact, so every 1.24.0 deployment has it.
+
+**What we did instead:** nothing — there is no workaround from outside the image. 1.24.0 is
+the newest chart published, so there is no version to move to. The logs tab is unusable and
+is documented as such rather than worked around.
+
+**Contribution type:** bug report, with an unusually cheap repro — `find .next/server/app/api/telemetry -name route.js`
+inside the released image shows the missing segment without deploying anything. Plausibly a
+build/export omission (route group or `export const dynamic` missing on those handlers)
+rather than deliberate removal, since the client half shipped.
+
 ## Watch list
 
 Carried from the project brief. These are suspected gaps to verify, not findings:
@@ -233,6 +282,7 @@ Carried from the project brief. These are suspected gaps to verify, not findings
 | OTel GenAI semconv | Cannot express multi-agent handoff semantics | Phase 1, step 7 |
 | LiteLLM | GenAI semconv coverage where it meets MCP tool calls | Phase 1, step 8 (model-identity gap already promoted to item 3) |
 | ~~Perses~~ | ~~ClickHouse trace-query SDK missing~~ | **Verified — promoted to Open, item 1** |
+| OpenLIT | Whether other tabs share the logs tab's missing-route defect | Any tab that renders empty or throws a JSON parse error |
 
 ## Filed
 
