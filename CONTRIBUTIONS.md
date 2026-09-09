@@ -79,6 +79,45 @@ section naming the expected tables, stating that OpenLIT creates them if absent,
 recommending an order. Low effort, high value, and a natural first contribution to this
 project.
 
+### 3. LiteLLM — `gen_ai.response.model` reports the gateway alias, not the model that served the request
+
+**Project:** [BerriAI/litellm](https://github.com/BerriAI/litellm)
+**Status:** Observed in phase 1 step 3, 2026-09-09, with `LITELLM_OTEL_V2=true` and
+`LITELLM_OTEL_LEGACY_COMPAT=false`. Not yet filed.
+
+A request routed through a gateway entry named `local`, which resolves to
+`ollama_chat/qwen2.5:3b`, produced these span attributes:
+
+```
+gen_ai.request.model     local                      <- the alias
+gen_ai.response.model    local                      <- the alias
+litellm.provider.model   ollama_chat/qwen2.5:3b     <- the actual model, vendor-namespaced
+```
+
+`gen_ai.request.model` carrying the alias is defensible — the caller did ask for `local`.
+`gen_ai.response.model` is not. The OTel GenAI semantic conventions define it as the model
+that *generated the response*, and no model called `local` exists. The real identity is
+only available under a `litellm.*` key, which is precisely the vendor-specific vocabulary
+that adopting the semconv is supposed to make unnecessary.
+
+**Why this matters beyond tidiness, and why it belongs in this project:** one of the four
+audit questions this lab exists to answer is *what did the agent do*, and "which model
+processed this request" is part of that answer. A regulated enterprise reading only
+standard GenAI attributes — the portable ones, the ones a vendor-neutral audit tool would
+consume — gets the gateway's routing alias and cannot tell whether a request was served by
+a local 3B model or a third-party frontier model. Those have materially different
+compliance consequences. The information exists; it is just not in the field the standard
+reserves for it.
+
+**What we did instead:** nothing yet — recorded rather than worked around, since a
+workaround here (reading `litellm.provider.model` in our queries) is exactly what would
+make the gap invisible and permanent.
+
+**Contribution type:** bug report, likely a small code change. Populate
+`gen_ai.response.model` from the resolved provider model while leaving
+`gen_ai.request.model` as the requested alias. Worth opening as an issue first to check
+whether the current behaviour is deliberate.
+
 ## Watch list
 
 Carried from the project brief. These are suspected gaps to verify, not findings:
@@ -88,7 +127,7 @@ Carried from the project brief. These are suspected gaps to verify, not findings
 | LangGraph | OpenTelemetry instrumentation known to be incomplete upstream | Phase 1, step 7 |
 | OpenLIT | Instrumentation coverage — which spans we still hand-roll | Phase 1, step 7 (schema-contract gap already promoted to item 2) |
 | OTel GenAI semconv | Cannot express multi-agent handoff semantics | Phase 1, step 7 |
-| LiteLLM | GenAI semconv coverage where it meets MCP tool calls | Phase 1, step 8 |
+| LiteLLM | GenAI semconv coverage where it meets MCP tool calls | Phase 1, step 8 (model-identity gap already promoted to item 3) |
 | ~~Perses~~ | ~~ClickHouse trace-query SDK missing~~ | **Verified — promoted to Open, item 1** |
 
 ## Filed

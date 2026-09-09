@@ -1,0 +1,16 @@
+# Rendered by scripts/render-litellm-config.py from .env — do not edit the
+# rendered output. The template exists so .env stays the single source of truth
+# for which model each route resolves to.
+#
+# Phase 1 is passthrough ONLY. No virtual keys, no budgets, no guardrails, no
+# per-team routing. Those are phase 2 and adding them here early would blur the
+# distinction the project is built to demonstrate: the gateway enforces at the
+# boundary, the Collector processes after the fact.
+model_list:
+{{MODEL_LIST}}
+
+litellm_settings:
+  drop_params: true
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY

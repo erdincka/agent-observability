@@ -33,3 +33,4 @@ kubeconfig*
 # Helm
 charts/**/charts/
 *.tgz
+config.rendered.yaml

@@ -35,6 +35,13 @@ secrets: env-check ## Render .env into Kubernetes Secrets (never committed)
 		--from-literal=CLICKHOUSE_PASSWORD="$$CLICKHOUSE_PASSWORD" \
 		--from-literal=CLICKHOUSE_DB="$$CLICKHOUSE_DB" \
 		--dry-run=client -o yaml | kubectl apply -f -
+	@set -a; . ./.env; set +a; \
+	kubectl create secret generic litellm-auth \
+		--namespace $(PLATFORM_NS) \
+		--from-literal=LITELLM_MASTER_KEY="$$LITELLM_MASTER_KEY" \
+		--from-literal=OLLAMA_BASE_URL="$$OLLAMA_BASE_URL" \
+		--from-literal=OPENROUTER_API_KEY="$$OPENROUTER_API_KEY" \
+		--dry-run=client -o yaml | kubectl apply -f -
 
 .PHONY: clickhouse
 clickhouse: ## Deploy ClickHouse (hot store)
@@ -89,3 +96,32 @@ openlit-logs: ## Tail OpenLIT
 
 .PHONY: step2
 step2: openlit ## Everything in step 2
+
+.PHONY: ollama
+ollama: ## Deploy the self-hosted Ollama model route
+	kubectl apply -f deploy/40-ollama/ollama.yaml
+	kubectl rollout status deployment/ollama -n $(PLATFORM_NS) --timeout=300s
+
+.PHONY: ollama-pull
+ollama-pull: env-check ## Pull the default model into Ollama (slow, one-off)
+	@set -a; . ./.env; set +a; \
+	echo "pulling $$OLLAMA_MODEL ..."; \
+	kubectl exec -n $(PLATFORM_NS) deploy/ollama -- ollama pull "$$OLLAMA_MODEL"
+
+.PHONY: litellm
+litellm: env-check ## Render config and deploy the LiteLLM gateway
+	./scripts/render-litellm-config.py
+	kubectl create configmap litellm-config \
+		--namespace $(PLATFORM_NS) \
+		--from-file=config.yaml=deploy/50-litellm/config.rendered.yaml \
+		--dry-run=client -o yaml | kubectl apply -f -
+	@sum=$$(shasum -a 256 deploy/50-litellm/config.rendered.yaml | cut -c1-16); \
+	sed "s/REPLACED_AT_DEPLOY/$$sum/" deploy/50-litellm/litellm.yaml | kubectl apply -f -
+	kubectl rollout status deployment/litellm -n $(PLATFORM_NS) --timeout=300s
+
+.PHONY: litellm-logs
+litellm-logs: ## Tail the LiteLLM gateway
+	kubectl logs -n $(PLATFORM_NS) -l app.kubernetes.io/name=litellm -f --tail=100
+
+.PHONY: step3
+step3: ollama ollama-pull litellm ## Everything in step 3

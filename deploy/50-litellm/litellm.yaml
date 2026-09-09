@@ -1,0 +1,90 @@
+# LiteLLM proxy — the model gateway. Passthrough in phase 1.
+#
+# Deployed now rather than in phase 2 on purpose. Establishing the topology
+# costs almost nothing today and means no model call has to be re-wired when the
+# governance layer arrives. Every model call in this project goes through here,
+# which is what makes "who called what, on whose behalf" answerable at all.
+#
+# The OTel v2 integration is opt-in and its defaults matter — see the env below.
+apiVersion: v1
+kind: Service
+metadata:
+  name: litellm
+  namespace: agent-obs-platform
+  labels: { app.kubernetes.io/name: litellm }
+spec:
+  type: ClusterIP
+  selector: { app.kubernetes.io/name: litellm }
+  ports:
+    - { name: http, port: 4000, targetPort: 4000 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: litellm
+  namespace: agent-obs-platform
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: litellm }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: litellm }
+      annotations:
+        # Forces a rollout when the rendered config changes, since a ConfigMap
+        # update alone will not restart the pod.
+        checksum/config: "REPLACED_AT_DEPLOY"
+    spec:
+      containers:
+        - name: litellm
+          image: ghcr.io/berriai/litellm:main-stable
+          args: ["--config", "/etc/litellm/config.yaml", "--port", "4000"]
+          ports:
+            - { name: http, containerPort: 4000 }
+          env:
+            # --- OpenTelemetry v2 -------------------------------------------
+            # v2 is opt-in. Without this you silently get v1 behaviour, which
+            # does not follow the GenAI semantic conventions.
+            - { name: LITELLM_OTEL_V2, value: "true" }
+            - { name: OTEL_EXPORTER,   value: "otlp_http" }
+            - { name: OTEL_ENDPOINT,   value: "http://otel-collector.agent-obs-platform.svc.cluster.local:4318" }
+            - { name: OTEL_SERVICE_NAME, value: "litellm-gateway" }
+
+            # Opt in to the current GenAI conventions rather than an older
+            # frozen set — being on the live semconv, experimental parts
+            # included, is the point of the exercise.
+            - { name: OTEL_SEMCONV_STABILITY_OPT_IN, value: "gen_ai_latest_experimental" }
+
+            # Defaults to true, which re-emits every attribute a second time
+            # under legacy Traceloop names. Left alone, ClickHouse fills with
+            # two vocabularies for the same data and every query is ambiguous.
+            - { name: LITELLM_OTEL_LEGACY_COMPAT, value: "false" }
+
+            # THE control this entire project is about. `no_content` is already
+            # the default; it is set explicitly because a security posture that
+            # depends on nobody changing a default is not a posture. Phase 2
+            # tests whether the four audit questions can still be answered with
+            # this set to no_content.
+            #   no_content | span_only | event_only | span_and_event
+            - { name: OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT, value: "no_content" }
+
+            # --- routing ----------------------------------------------------
+            - name: OLLAMA_BASE_URL
+              valueFrom: { secretKeyRef: { name: litellm-auth, key: OLLAMA_BASE_URL } }
+            - name: LITELLM_MASTER_KEY
+              valueFrom: { secretKeyRef: { name: litellm-auth, key: LITELLM_MASTER_KEY } }
+            - name: OPENROUTER_API_KEY
+              valueFrom:
+                secretKeyRef: { name: litellm-auth, key: OPENROUTER_API_KEY, optional: true }
+          volumeMounts:
+            - { name: config, mountPath: /etc/litellm }
+          resources:
+            requests: { cpu: 100m, memory: 512Mi }
+            limits:   { cpu: "2",  memory: 2Gi }
+          readinessProbe:
+            httpGet: { path: /health/liveliness, port: 4000 }
+            initialDelaySeconds: 15
+            periodSeconds: 10
+      volumes:
+        - name: config
+          configMap: { name: litellm-config }
