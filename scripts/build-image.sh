@@ -9,13 +9,18 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-APP="${1:?usage: build-image.sh <app-dir-name> [tag]}"
+APP="${1:?usage: build-image.sh <app-dir-name> [tag] [context]}"
 TAG="${2:-0.1.0}"
 REGISTRY="10.1.1.240:5000"
 IMAGE="${REGISTRY}/agent-obs/${APP}:${TAG}"
 
+# Some apps need files from outside their own directory (the MCP servers bake in
+# this repo's git history and docs/runbooks), so the build context is selectable.
+CONTEXT="${3:-apps/${APP}}"
+
 echo "==> building ${IMAGE} on docker context pve (native amd64)"
-docker --context pve build -t "${IMAGE}" "apps/${APP}"
+echo "    dockerfile: apps/${APP}/Dockerfile   context: ${CONTEXT}"
+docker --context pve build -f "apps/${APP}/Dockerfile" -t "${IMAGE}" "${CONTEXT}"
 
 echo "==> pushing to the in-cluster registry"
 docker --context pve push "${IMAGE}"

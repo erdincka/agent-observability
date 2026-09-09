@@ -129,6 +129,7 @@ litellm: env-check secrets ## Render config and deploy the LiteLLM gateway
 		echo "$$OPENROUTER_API_KEY$$LITELLM_MASTER_KEY$$OLLAMA_BASE_URL"; } \
 		| shasum -a 256 | cut -c1-16); \
 	sed "s/REPLACED_AT_DEPLOY/$$sum/" deploy/50-litellm/litellm.yaml | kubectl apply -f -
+	kubectl apply -f deploy/50-litellm/httproute.yaml
 	kubectl rollout status deployment/litellm -n $(PLATFORM_NS) --timeout=300s
 
 .PHONY: litellm-logs
@@ -153,3 +154,21 @@ workflow-probe: ## Run the plumbing proof: a trace starting in the workflow
 	kubectl apply -f deploy/70-workflow/probe-job.yaml
 	kubectl wait --for=condition=complete job/workflow-probe -n $(APP_NS) --timeout=600s
 	kubectl logs -n $(APP_NS) job/workflow-probe
+
+.PHONY: mcp-image
+mcp-image: ## Build and push the MCP servers image (context = repo root)
+	./scripts/build-image.sh mcp 0.1.0 .
+
+.PHONY: mcp
+mcp: ## Deploy the three MCP tool servers
+	kubectl apply -f deploy/80-mcp/servers.yaml
+	kubectl rollout status deployment/mcp-metrics  -n $(APP_NS) --timeout=300s
+	kubectl rollout status deployment/mcp-changes  -n $(APP_NS) --timeout=300s
+	kubectl rollout status deployment/mcp-runbooks -n $(APP_NS) --timeout=300s
+
+.PHONY: mcp-probe
+mcp-probe: ## List the tools each MCP server exposes
+	./scripts/mcp-probe.sh
+
+.PHONY: step5
+step5: mcp-image mcp mcp-probe ## Everything in step 5

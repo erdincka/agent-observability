@@ -1,0 +1,147 @@
+# The three MCP tool servers, one Deployment each.
+#
+# Separate pods speaking streamable HTTP, not stdio subprocesses of the
+# workflow. That choice is the point: in-process, trace context would stay
+# continuous for free and the agent-to-tool boundary would demonstrate nothing.
+# A real network hop is what makes MCP's silence on trace propagation visible —
+# and phase 2's per-role tool access needs somewhere to actually enforce.
+#
+# One image backs all three; the Deployment's args choose which server runs.
+
+---
+# mcp-metrics — Queries the Prometheus already running in this lab.
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-metrics
+  namespace: agent-obs-app
+  labels: { app.kubernetes.io/name: mcp-metrics }
+spec:
+  type: ClusterIP
+  selector: { app.kubernetes.io/name: mcp-metrics }
+  ports:
+    - { name: http, port: 8080, targetPort: 8080 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-metrics
+  namespace: agent-obs-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: mcp-metrics }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: mcp-metrics }
+    spec:
+      containers:
+        - name: server
+          image: 10.1.1.240:5000/agent-obs/mcp:0.1.0
+          # A mutable tag defaults to IfNotPresent, so a rebuilt 0.1.0 is never
+          # re-pulled and the node quietly keeps serving the previous code —
+          # you debug a source file that is not the one running. Always, while
+          # the tag is mutable; pin a digest before this is called reproducible.
+          imagePullPolicy: Always
+          command: ["python", "-m", "mcpservers.metrics_server"]
+          ports:
+            - { name: http, containerPort: 8080 }
+          env:
+            - { name: OTEL_SERVICE_NAME, value: "mcp-metrics" }
+            - { name: OTLP_ENDPOINT, value: "http://otel-collector.agent-obs-platform.svc.cluster.local:4318" }
+            - { name: PROMETHEUS_URL, value: "http://kube-prometheus-stack-prometheus.observability.svc.cluster.local:9090" }
+          resources:
+            requests: { cpu: 50m, memory: 256Mi }
+            limits:   { cpu: "1",  memory: 1Gi }
+
+---
+# mcp-changes — Reads this repository's own git history, baked into the image.
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-changes
+  namespace: agent-obs-app
+  labels: { app.kubernetes.io/name: mcp-changes }
+spec:
+  type: ClusterIP
+  selector: { app.kubernetes.io/name: mcp-changes }
+  ports:
+    - { name: http, port: 8080, targetPort: 8080 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-changes
+  namespace: agent-obs-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: mcp-changes }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: mcp-changes }
+    spec:
+      containers:
+        - name: server
+          image: 10.1.1.240:5000/agent-obs/mcp:0.1.0
+          # A mutable tag defaults to IfNotPresent, so a rebuilt 0.1.0 is never
+          # re-pulled and the node quietly keeps serving the previous code —
+          # you debug a source file that is not the one running. Always, while
+          # the tag is mutable; pin a digest before this is called reproducible.
+          imagePullPolicy: Always
+          command: ["python", "-m", "mcpservers.changes_server"]
+          ports:
+            - { name: http, containerPort: 8080 }
+          env:
+            - { name: OTEL_SERVICE_NAME, value: "mcp-changes" }
+            - { name: OTLP_ENDPOINT, value: "http://otel-collector.agent-obs-platform.svc.cluster.local:4318" }
+            - { name: GIT_REPO_PATH, value: "/repo" }
+          resources:
+            requests: { cpu: 50m, memory: 256Mi }
+            limits:   { cpu: "1",  memory: 1Gi }
+
+---
+# mcp-runbooks — Searches markdown runbooks baked into the image.
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-runbooks
+  namespace: agent-obs-app
+  labels: { app.kubernetes.io/name: mcp-runbooks }
+spec:
+  type: ClusterIP
+  selector: { app.kubernetes.io/name: mcp-runbooks }
+  ports:
+    - { name: http, port: 8080, targetPort: 8080 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-runbooks
+  namespace: agent-obs-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: mcp-runbooks }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: mcp-runbooks }
+    spec:
+      containers:
+        - name: server
+          image: 10.1.1.240:5000/agent-obs/mcp:0.1.0
+          # A mutable tag defaults to IfNotPresent, so a rebuilt 0.1.0 is never
+          # re-pulled and the node quietly keeps serving the previous code —
+          # you debug a source file that is not the one running. Always, while
+          # the tag is mutable; pin a digest before this is called reproducible.
+          imagePullPolicy: Always
+          command: ["python", "-m", "mcpservers.runbooks_server"]
+          ports:
+            - { name: http, containerPort: 8080 }
+          env:
+            - { name: OTEL_SERVICE_NAME, value: "mcp-runbooks" }
+            - { name: OTLP_ENDPOINT, value: "http://otel-collector.agent-obs-platform.svc.cluster.local:4318" }
+            - { name: RUNBOOKS_DIR, value: "/runbooks" }
+          resources:
+            requests: { cpu: 50m, memory: 256Mi }
+            limits:   { cpu: "1",  memory: 1Gi }

@@ -16,6 +16,7 @@ spec:
       containers:
         - name: workflow
           image: 10.1.1.240:5000/agent-obs/workflow:0.1.0
+          imagePullPolicy: Always   # same mutable-tag trap as the MCP servers
           args: ["--probe"]
           env:
             - { name: OTEL_SERVICE_NAME, value: "triage-workflow" }

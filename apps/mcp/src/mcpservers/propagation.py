@@ -51,7 +51,18 @@ WHAT TO WRITE
 
     inject_context(headers)  -> the client-side counterpart, for the workflow
 
-Both sides are yours. The servers below call `extract_context` already.
+Both sides are yours. The servers already call `extract_context` for you, via
+`server_base.join_caller_trace`, which is wired to hand you the request headers.
+
+Two concrete hooks, both confirmed present in mcp 2.x:
+
+  server side — `Context.headers` gives a tool the incoming HTTP headers
+                directly. Under stdio it is empty, which is precisely the
+                asymmetry worth writing about.
+
+  client side — `streamable_http_client(url, http_client=...)` accepts a
+                pre-configured `httpx2.AsyncClient`, which is where outbound
+                headers would come from.
 """
 
 from typing import Mapping
