@@ -1,0 +1,24 @@
+# Exposes the Ollama UI through the pre-existing Envoy Gateway rather than
+# allocating another MetalLB address. The `platform` Gateway listens on
+# *.kube.local and accepts routes from all namespaces.
+#
+# Reachable at http://ollama.kube.local once that name resolves to the
+# gateway address (10.1.1.241).
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: ollama
+  namespace: agent-obs-platform
+spec:
+  parentRefs:
+    - name: platform
+      namespace: gateway
+      sectionName: web
+  hostnames:
+    - ollama.kube.local
+  rules:
+    - matches:
+        - path: { type: PathPrefix, value: / }
+      backendRefs:
+        - name: ollama
+          port: 11434

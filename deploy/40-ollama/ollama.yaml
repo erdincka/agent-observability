@@ -54,7 +54,7 @@ spec:
                   - { key: node-role.kubernetes.io/control-plane, operator: DoesNotExist }
       containers:
         - name: ollama
-          image: ollama/ollama:0.12.3
+          image: ollama/ollama:latest
           ports:
             - { name: http, containerPort: 11434 }
           env:

@@ -114,13 +114,20 @@ ollama-pull: env-check ## Pull the default model into Ollama (slow, one-off)
 	kubectl exec -n $(PLATFORM_NS) deploy/ollama -- ollama pull "$$OLLAMA_MODEL"
 
 .PHONY: litellm
-litellm: env-check ## Render config and deploy the LiteLLM gateway
+# Depends on `secrets` deliberately. Rendering the config from .env while leaving
+# the Secret stale applies half a change: the route appears, its credential does
+# not, and the failure surfaces as a 401 from the provider rather than as
+# anything pointing at .env. Cost an hour once; not again.
+litellm: env-check secrets ## Render config and deploy the LiteLLM gateway
 	./scripts/render-litellm-config.py
 	kubectl create configmap litellm-config \
 		--namespace $(PLATFORM_NS) \
 		--from-file=config.yaml=deploy/50-litellm/config.rendered.yaml \
 		--dry-run=client -o yaml | kubectl apply -f -
-	@sum=$$(shasum -a 256 deploy/50-litellm/config.rendered.yaml | cut -c1-16); \
+	@set -a; . ./.env; set +a; \
+	sum=$$( { cat deploy/50-litellm/config.rendered.yaml; \
+		echo "$$OPENROUTER_API_KEY$$LITELLM_MASTER_KEY$$OLLAMA_BASE_URL"; } \
+		| shasum -a 256 | cut -c1-16); \
 	sed "s/REPLACED_AT_DEPLOY/$$sum/" deploy/50-litellm/litellm.yaml | kubectl apply -f -
 	kubectl rollout status deployment/litellm -n $(PLATFORM_NS) --timeout=300s
 

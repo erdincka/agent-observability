@@ -26,7 +26,22 @@ kubectl run "gw-probe-$$" --namespace "$PLATFORM_NS" --rm -i --quiet --restart=N
         -H "traceparent: 00-${TRACE_ID}-${SPAN_ID}-01" \
         -d "{\"model\":\"${ROUTE}\",\"max_tokens\":24,
              \"messages\":[{\"role\":\"user\",\"content\":\"Reply with the single word: pong\"}]}" \
-    | python3 -c "import json,sys; d=json.load(sys.stdin); print('==> model said:', repr(d['choices'][0]['message']['content'][:80]))"
+    | python3 -c "
+import json, sys
+raw = sys.stdin.read()
+try:
+    d = json.loads(raw)
+except json.JSONDecodeError:
+    sys.exit(f'==> gateway returned non-JSON:\n{raw[:400]}')
+# The gateway reports provider failures as a 200-shaped JSON error body, so
+# assuming 'choices' turns an actionable 401 into an opaque KeyError.
+if 'error' in d:
+    e = d['error']
+    sys.exit('==> gateway error [{}]: {}'.format(e.get('code'), e.get('message', d)))
+if 'choices' not in d:
+    sys.exit('==> unexpected response shape: {}'.format(json.dumps(d)[:400]))
+print('==> model said:', repr(d['choices'][0]['message']['content'][:80]))
+"
 
 echo "==> polling ClickHouse until the span count STOPS changing"
 # Waiting for the first span is a race: the gateway emits several spans per

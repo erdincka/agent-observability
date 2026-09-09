@@ -94,6 +94,12 @@ gen_ai.response.model    local                      <- the alias
 litellm.provider.model   ollama_chat/qwen2.5:3b     <- the actual model, vendor-namespaced
 ```
 
+Confirmed again on a second, unrelated provider (2026-09-09): a request to the `remote`
+route reported `gen_ai.request.model = remote` and `gen_ai.response.model = remote`, with
+the actual model `openrouter/nvidia/nemotron-3.5-lightning:free` again only under
+`litellm.provider.model`. The behaviour is provider-independent — it is the gateway's
+mapping, not an Ollama quirk — which makes it a cleaner bug report.
+
 `gen_ai.request.model` carrying the alias is defensible — the caller did ask for `local`.
 `gen_ai.response.model` is not. The OTel GenAI semantic conventions define it as the model
 that *generated the response*, and no model called `local` exists. The real identity is
