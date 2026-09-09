@@ -1,0 +1,105 @@
+# ClickHouse — the hot store for traces, logs and metrics.
+#
+# Deployed as a plain StatefulSet rather than a Helm chart, deliberately. This is
+# a single-node lab instance; a chart would add several hundred values of
+# indirection over roughly eighty lines of Kubernetes, and a requirement of this
+# project is being able to explain every component end to end. Helm is used where
+# it earns its place (the Collector, OpenLIT) and not where it doesn't.
+#
+# The schema is NOT created here. The OpenTelemetry Collector's clickhouseexporter
+# creates `otel_traces` / `otel_logs` on first write. That is intentional: the
+# Collector owns the write path, which is what makes phase 2's redaction, routing
+# and tail sampling possible at all.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: clickhouse-config
+  namespace: agent-obs-platform
+data:
+  # Dropped into config.d/ and merged over the image's defaults.
+  custom.xml: |
+    <clickhouse>
+      <!-- The container sees the node's full RAM, not its cgroup limit, so left
+           alone ClickHouse sizes its caches against 64Gi and gets OOM-killed
+           against a 12Gi limit. Ratio is applied to the limit below. -->
+      <max_server_memory_usage_to_ram_ratio>0.7</max_server_memory_usage_to_ram_ratio>
+      <logger>
+        <level>information</level>
+        <console>1</console>
+      </logger>
+      <!-- Lab instance: no distributed coordination, keep it quiet. -->
+      <listen_host>0.0.0.0</listen_host>
+    </clickhouse>
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: clickhouse
+  namespace: agent-obs-platform
+  labels: { app.kubernetes.io/name: clickhouse }
+spec:
+  type: ClusterIP
+  selector: { app.kubernetes.io/name: clickhouse }
+  ports:
+    - { name: http,   port: 8123, targetPort: 8123 }   # OpenLIT reads over HTTP
+    - { name: native, port: 9000, targetPort: 9000 }   # clickhouseexporter writes over native
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: clickhouse
+  namespace: agent-obs-platform
+spec:
+  serviceName: clickhouse
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: clickhouse }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: clickhouse }
+    spec:
+      # local-path provisions a host directory owned by root; the image runs as
+      # uid 101. Without fsGroup the server cannot write its own data directory.
+      securityContext:
+        fsGroup: 101
+      containers:
+        - name: clickhouse
+          image: clickhouse/clickhouse-server:25.8.33
+          ports:
+            - { name: http,   containerPort: 8123 }
+            - { name: native, containerPort: 9000 }
+          env:
+            - name: CLICKHOUSE_USER
+              valueFrom: { secretKeyRef: { name: clickhouse-auth, key: CLICKHOUSE_USER } }
+            - name: CLICKHOUSE_PASSWORD
+              valueFrom: { secretKeyRef: { name: clickhouse-auth, key: CLICKHOUSE_PASSWORD } }
+            - name: CLICKHOUSE_DB
+              valueFrom: { secretKeyRef: { name: clickhouse-auth, key: CLICKHOUSE_DB } }
+            - name: CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT
+              value: "1"
+          volumeMounts:
+            - { name: data,   mountPath: /var/lib/clickhouse }
+            - { name: config, mountPath: /etc/clickhouse-server/config.d }
+          resources:
+            requests: { cpu: "1",  memory: 2Gi }
+            limits:   { cpu: "6",  memory: 12Gi }
+          readinessProbe:
+            httpGet: { path: /ping, port: 8123 }
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /ping, port: 8123 }
+            initialDelaySeconds: 60
+            periodSeconds: 15
+      volumes:
+        - name: config
+          configMap: { name: clickhouse-config }
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        # local-path cannot expand volumes after the fact, so this is sized once
+        # and generously. Workers have ~183Gi allocatable.
+        resources:
+          requests: { storage: 40Gi }

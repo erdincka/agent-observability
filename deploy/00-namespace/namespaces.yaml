@@ -1,0 +1,26 @@
+# Two namespaces, split along the line phase 2's governance boundary will run along.
+#
+#   agent-obs-platform  — the observability and gateway plane. Owns the telemetry
+#                         write path and every credential that reaches a model.
+#   agent-obs-app       — the workload. The LangGraph workflow, the MCP tool
+#                         servers, and the application's own Postgres state.
+#
+# Keeping them apart now means per-role tool access and identity propagation in
+# phase 2 are NetworkPolicy and RBAC work rather than a re-layout. It also puts a
+# namespace boundary between this project's OTLP path and the pre-existing Tempo
+# in the `observability` namespace, which listens on the same ports.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agent-obs-platform
+  labels:
+    app.kubernetes.io/part-of: agent-observability
+    agent-obs.io/plane: platform
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agent-obs-app
+  labels:
+    app.kubernetes.io/part-of: agent-observability
+    agent-obs.io/plane: app

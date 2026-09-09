@@ -1,0 +1,101 @@
+# OpenTelemetry Collector — the single write path into ClickHouse.
+#
+# Helm is used here (unlike ClickHouse) because the chart genuinely earns it:
+# Service, RBAC, config reloading and the health/pprof extensions are all wiring
+# we would otherwise hand-maintain for no insight.
+#
+# The contrib image is mandatory, not a preference — clickhouseexporter does not
+# exist in the core distribution.
+#
+# chart: open-telemetry/opentelemetry-collector 0.172.1  (app 0.159.0)
+
+mode: deployment
+replicaCount: 1
+fullnameOverride: otel-collector
+
+image:
+  repository: otel/opentelemetry-collector-contrib
+command:
+  name: otelcol-contrib
+
+# Supplies CLICKHOUSE_USER / CLICKHOUSE_PASSWORD / CLICKHOUSE_DB to the
+# ${env:...} references below, so no credential is ever written into this file.
+extraEnvsFrom:
+  - secretRef:
+      name: clickhouse-auth
+
+# The chart opens Jaeger and Zipkin ports by default. This project has exactly
+# one ingest protocol and every unused listener is surface we would have to
+# explain in an audit conversation.
+ports:
+  jaeger-compact: { enabled: false }
+  jaeger-thrift:  { enabled: false }
+  jaeger-grpc:    { enabled: false }
+  zipkin:         { enabled: false }
+
+resources:
+  requests: { cpu: 100m, memory: 256Mi }
+  limits:   { cpu: "2",  memory: 2Gi }
+
+config:
+  receivers:
+    # Explicitly nulled rather than merely unexposed — the chart merges its
+    # defaults into this map, so omitting them is not the same as removing them.
+    jaeger: null
+    zipkin: null
+    prometheus: null
+    otlp:
+      protocols:
+        grpc: { endpoint: 0.0.0.0:4317 }
+        http: { endpoint: 0.0.0.0:4318 }
+
+  processors:
+    # Ordered deliberately: shed load before doing work, batch immediately before
+    # export. Phase 2's redaction, routing and tail sampling insert between these.
+    memory_limiter:
+      check_interval: 1s
+      limit_percentage: 80
+      spike_limit_percentage: 20
+      # NOTE (phase 2): redaction / attribute filtering goes here.
+      # NOTE (phase 2): tail sampling goes here.
+    batch:
+      timeout: 5s
+      send_batch_size: 1024
+
+  exporters:
+    debug:
+      # Turned down to `basic` once the pipeline is proven; during bring-up the
+      # only thing worse than no telemetry is telemetry you cannot see.
+      verbosity: detailed
+    clickhouse:
+      endpoint: tcp://clickhouse.agent-obs-platform.svc.cluster.local:9000?dial_timeout=10s&compress=lz4
+      database: ${env:CLICKHOUSE_DB}
+      username: ${env:CLICKHOUSE_USER}
+      password: ${env:CLICKHOUSE_PASSWORD}
+      # The exporter creates otel_traces / otel_logs / otel_metrics_* on first
+      # write. These names are not arbitrary: OpenLIT's UI queries otel_traces
+      # and otel_logs by exactly these names.
+      create_schema: true
+      traces_table_name: otel_traces
+      logs_table_name: otel_logs
+      ttl: 720h
+      timeout: 10s
+      retry_on_failure:
+        enabled: true
+        initial_interval: 5s
+        max_interval: 30s
+
+  service:
+    extensions: [health_check]
+    pipelines:
+      traces:
+        receivers: [otlp]
+        processors: [memory_limiter, batch]
+        exporters: [clickhouse, debug]
+      logs:
+        receivers: [otlp]
+        processors: [memory_limiter, batch]
+        exporters: [clickhouse, debug]
+      # Metrics are received but not yet stored. Prometheus already exists in
+      # this lab and GenAI metrics are not what phase 1 is proving.
+      metrics: null
