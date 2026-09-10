@@ -6,6 +6,9 @@
 
 SHELL := /bin/bash
 PLATFORM_NS := agent-obs-platform
+# Defaults for `make workflow-triage`; override on the command line.
+INCIDENT    ?= checkout-latency
+ROUTE       ?= local
 APP_NS      := agent-obs-app
 COLLECTOR_CHART_VERSION := 0.172.1
 OPENLIT_CHART_VERSION   := 1.24.0
@@ -203,6 +206,22 @@ workflow-probe: ## Run the plumbing proof: a trace starting in the workflow
 	kubectl apply -f deploy/70-workflow/probe-job.yaml
 	kubectl wait --for=condition=complete job/workflow-probe -n $(APP_NS) --timeout=600s
 	kubectl logs -n $(APP_NS) job/workflow-probe
+
+.PHONY: workflow-triage
+# INCIDENT and ROUTE are templated into the Job so a comparison run is a flag,
+# not an edit: `make workflow-triage ROUTE=remote INCIDENT=no-evidence`.
+workflow-triage: ## Run the triage workflow (INCIDENT=, ROUTE=)
+	-kubectl delete job workflow-triage -n $(APP_NS) --ignore-not-found
+	sed -e 's|__INCIDENT__|$(INCIDENT)|' -e 's|__ROUTE__|$(ROUTE)|' \
+		deploy/70-workflow/triage-job.yaml | kubectl apply -f -
+	kubectl wait --for=condition=complete job/workflow-triage -n $(APP_NS) --timeout=900s
+	kubectl logs -n $(APP_NS) job/workflow-triage
+
+.PHONY: workflow-incidents
+workflow-incidents: ## List the fixed incident corpus
+	kubectl run workflow-incidents-$$$$ --namespace $(APP_NS) --rm -i --quiet \
+		--restart=Never --image=10.1.1.240:5000/agent-obs/workflow:0.1.0 \
+		--command -- python -m workflow --list
 
 .PHONY: mcp-image
 mcp-image: ## Build and push the MCP servers image (context = repo root)

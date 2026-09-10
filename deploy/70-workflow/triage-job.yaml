@@ -1,0 +1,48 @@
+# Runs the triage graph once — the real workflow, not the plumbing proof.
+#
+# A Job rather than a Deployment because a triage run is a one-shot with an end,
+# not a service. `make workflow-triage` templates INCIDENT and ROUTE into it, so
+# "same incident, other model route" is a flag rather than an edit.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: workflow-triage
+  namespace: agent-obs-app
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: workflow
+          image: 10.1.1.240:5000/agent-obs/workflow:0.1.0
+          imagePullPolicy: Always   # same mutable-tag trap as the MCP servers
+          env:
+            - { name: OTEL_SERVICE_NAME, value: "triage-workflow" }
+
+            # Which incident, from the fixed corpus in incidents.py. A named id
+            # rather than prose on argv: a baseline needs the input held
+            # constant, and an unknown id fails loudly instead of falling back.
+            - { name: INCIDENT_ID, value: "__INCIDENT__" }
+
+            # Which LiteLLM route serves the run. The workflow never names a
+            # model — swapping local for remote changes nothing in the code and
+            # everything in the trace.
+            - { name: MODEL_ROUTE, value: "__ROUTE__" }
+
+            # Stamped onto the run span so a trace says which build produced it.
+            # Mutable tag, so this is the tag and not yet a digest — see the
+            # imagePullPolicy note above.
+            - { name: WORKFLOW_IMAGE, value: "agent-obs/workflow:0.1.0" }
+
+            - name: GATEWAY_API_KEY
+              valueFrom: { secretKeyRef: { name: gateway-auth, key: GATEWAY_API_KEY } }
+
+            # Drives the LangGraph checkpointer. CNPG publishes `uri` as a
+            # ready-made connection string, so the workflow and the database
+            # agree on the credential by construction.
+            - name: POSTGRES_DSN
+              valueFrom: { secretKeyRef: { name: workflow-db-app, key: uri } }
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits:   { cpu: "1",  memory: 1Gi }

@@ -271,6 +271,108 @@ inside the released image shows the missing segment without deploying anything. 
 build/export omission (route group or `export const dynamic` missing on those handlers)
 rather than deliberate removal, since the client half shipped.
 
+### 7. OpenLIT SDK — the LangChain callback handler bypasses its own `safe_detach`, so every async model call logs an ERROR
+
+**Project:** [openlit/openlit](https://github.com/openlit/openlit)
+**Status:** Hit during phase 1 step 6, 2026-09-10, on openlit 1.45.0. Not yet filed.
+
+Every model call from an async LangGraph node produced a stack trace:
+
+```
+ERROR opentelemetry.context: Failed to detach context
+ValueError: <Token var=<ContextVar name='current_context' ...>> was created in a different Context
+```
+
+Three separate things have to be true for that to reach an application's logs, and
+they are all true here.
+
+**One.** `openlit/instrumentation/langchain/__init__.py` attaches an OTel context in
+`on_llm_start` and detaches it in `on_llm_end` and `on_llm_error` — the two
+`otel_context.detach(ctx_token)` calls. Under an async graph those callbacks fire in
+different asyncio Tasks. `contextvars` Tokens can only be reset in the Context that
+created them, so the reset always raises.
+
+**Two.** Both call sites wrap the detach in `except Exception: pass`, which looks like
+the bug is already handled. It is not, and cannot be: `opentelemetry.context.detach()`
+catches the `ValueError` *itself* and logs it at ERROR before returning normally. The
+caller's `except` never sees anything. The suppression is real; the log line is emitted
+regardless.
+
+**Three — and this is what makes it a clean bug report rather than a design argument:**
+OpenLIT already ships the correct fix and does not use it at these two sites.
+`openlit.__helpers.safe_detach` detaches via `_RUNTIME_CONTEXT` precisely so a
+cross-Context Token can be handled at DEBUG instead of ERROR, and takes an
+`attaching_task` argument to short-circuit cross-Task exits before any detach is
+attempted. Its docstring describes this exact failure mode in detail. Other
+instrumentations use it. The LangChain handler does not.
+
+**Consequence:** harmless to the data, expensive to trust. The run it was loudest on
+produced 76 spans across five services with correct parenting and no error spans —
+contextvars are per-Task, so the attaching Task's context reverts when that Task ends.
+But it is an ERROR-level stack trace on every single model call, which is exactly the
+noise that trains an operator to stop reading ERROR lines.
+
+**What we did instead:** a `logging.Filter` on the `opentelemetry.context` logger that
+drops only this message (`apps/workflow/src/workflow/telemetry.py`), rather than
+silencing the logger, so a genuine context-management bug elsewhere still surfaces.
+
+**Contribution type:** code change, and a small one — route the two
+`otel_context.detach(ctx_token)` calls in the LangChain callback handler through
+`safe_detach`, passing the Task captured at attach time. The helper, the rationale and
+the docstring are already in the repository.
+
+### 8. OpenLIT — the telemetry page reads pre-semconv usage attribute names, so cost and tokens read zero
+
+**Project:** [openlit/openlit](https://github.com/openlit/openlit)
+**Status:** Found while checking the UI's filter controls, 2026-09-10, on chart 1.24.0. Not yet filed.
+
+The telemetry page's trace summary aggregates usage and cost directly in SQL
+(`.next/server/app/api/telemetry/summary/[signal]/route.js`):
+
+```sql
+CAST(SUM(toFloat64OrZero(SpanAttributes['gen_ai.usage.cost']))  AS FLOAT)   AS cost,
+CAST(SUM(toInt64OrZero(SpanAttributes['gen_ai.usage.total_tokens'])) AS INTEGER) AS tokens
+```
+
+Neither attribute is what a current-semconv producer emits. Across 24 hours of this
+lab's traces:
+
+| attribute | spans |
+| :- | -: |
+| `gen_ai.usage.input_tokens` | 100 |
+| `gen_ai.usage.output_tokens` | 100 |
+| `litellm.cost.total` | 97 |
+| `gen_ai.usage.total_tokens` | **0** |
+| `gen_ai.usage.cost` | 3 |
+
+The GenAI semantic conventions define `gen_ai.usage.input_tokens` and
+`gen_ai.usage.output_tokens`. There is no `total_tokens` — it was a Traceloop-era name —
+and there is no `gen_ai.usage.cost` at all; cost is not in the semconv, and LiteLLM
+publishes it under its own `litellm.cost.total`. The 3 `gen_ai.usage.cost` spans are from
+OpenLIT's *own* SDK instrumenting the workflow process, so the UI agrees with its SDK and
+with nothing else.
+
+**What makes this sharp rather than a version skew:** the condition is *caused* by
+following the spec. This lab sets `OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_latest_experimental`
+and `LITELLM_OTEL_LEGACY_COMPAT=false` on the gateway — deliberately, and documented in
+`deploy/50-litellm/litellm.yaml`, to avoid two vocabularies for the same data in
+ClickHouse. That choice is what makes OpenLIT's panels read zero. A user who left the
+legacy names on would see numbers; a user who opted into the current conventions sees
+zeros, with no indication that the attribute name is the reason.
+
+**Consequence:** the cost and token columns on the telemetry page are silently zero for
+any semconv-compliant producer. Same failure shape as item 6 and as the empty `otel_logs`
+table: a populated page showing 0 reads as "no spend in this window" and gets believed.
+
+**What we did instead:** nothing in the UI — there is no knob. Token and cost figures for
+this lab come from ClickHouse directly, against `gen_ai.usage.input_tokens` /
+`output_tokens` / `litellm.cost.total`.
+
+**Contribution type:** bug report, plausibly a small code change — read the semconv names
+with the legacy ones as fallback (`COALESCE`-style, or
+`input_tokens + output_tokens` when `total_tokens` is absent), and take cost from a
+provider-namespaced attribute when `gen_ai.usage.cost` is missing.
+
 ## Watch list
 
 Carried from the project brief. These are suspected gaps to verify, not findings:

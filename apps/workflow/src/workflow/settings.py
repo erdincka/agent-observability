@@ -21,6 +21,13 @@ class Settings:
     # that resolves to is the gateway's business, not the workflow's.
     model_route: str = os.getenv("MODEL_ROUTE", "local")
 
+    # Sampling is pinned, not left to the provider. `temperature` unset means
+    # ChatOpenAI sends nothing and Ollama applies its own default (~0.8), which
+    # makes span counts, tool-call counts and token totals move run to run for
+    # sampling reasons. A baseline you cannot diff is not a baseline.
+    temperature: float = float(os.getenv("MODEL_TEMPERATURE", "0"))
+    seed: int = int(os.getenv("MODEL_SEED", "1337"))
+
     otlp_endpoint: str = os.getenv(
         "OTLP_ENDPOINT", "http://otel-collector.agent-obs-platform.svc.cluster.local:4318"
     )
@@ -28,6 +35,28 @@ class Settings:
     environment: str = os.getenv("DEPLOY_ENVIRONMENT", "lab")
 
     postgres_dsn: str = os.getenv("POSTGRES_DSN", "")
+
+    service_domain: str = os.getenv("SERVICE_DOMAIN", "agent-obs-app.svc.cluster.local")
+    mcp_port: int = int(os.getenv("MCP_PORT", "8080"))
+
+    # How many model → tool → model rounds the retriever may take before it is
+    # cut off. A 3B model will happily loop; this bounds the run without
+    # bounding it so tightly that it cannot reach all three domains.
+    max_tool_rounds: int = int(os.getenv("MAX_TOOL_ROUNDS", "6"))
+
+    # Per-role output budgets, deliberately generous. A reasoning model spends
+    # its budget thinking before it writes anything: the `remote` route burned
+    # 1545 reasoning tokens to produce a 287-character answer. Capped below
+    # that, the provider returns `finish_reason: length` and puts the partial
+    # reasoning into `content` — so the node's output is the model's scratchpad
+    # instead of its answer, and the next node analyses that. Given room, the
+    # reasoning is dropped and `content` is the answer alone.
+    #
+    # Costs nothing on the local route, which stops at its own stop token well
+    # before the cap.
+    retriever_max_tokens: int = int(os.getenv("RETRIEVER_MAX_TOKENS", "1024"))
+    analyser_max_tokens: int = int(os.getenv("ANALYSER_MAX_TOKENS", "4096"))
+    reporter_max_tokens: int = int(os.getenv("REPORTER_MAX_TOKENS", "8192"))
 
 
 settings = Settings()
