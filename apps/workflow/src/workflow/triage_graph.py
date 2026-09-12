@@ -56,6 +56,7 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass, field
 from typing import Any, TypedDict
 
 from langchain_core.messages import (
@@ -67,11 +68,18 @@ from langchain_core.messages import (
 )
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
+from opentelemetry import trace
 
 from .mcp_client import tool_belt
 from .settings import settings
 
 log = logging.getLogger(__name__)
+
+# Our own tracer. The node spans below duplicate OpenLIT's `invoke_agent <name>`
+# spans on purpose: OpenLIT's are fine to look at and unusable to write to, for
+# the context reason documented in `_Usage.stamp`. Three extra spans a run buys
+# attribution that does not depend on another library's context hygiene.
+_tracer = trace.get_tracer("workflow.triage")
 
 
 class TriageState(TypedDict):
@@ -79,6 +87,129 @@ class TriageState(TypedDict):
     evidence: list[str]
     hypothesis: str
     report: str
+
+
+@dataclass
+class _Usage:
+    """Accumulates what a node's model calls cost, for stamping on its own span.
+
+    Every number here is already reported by the provider and already on the
+    *gateway's* span. The point of recording it again on the `invoke_agent` span
+    is attribution: agent names live on node spans, token counts live on gateway
+    spans, and joining them means walking the trace tree — which breaks the
+    moment a span in between goes missing (CONTRIBUTIONS item 7, and it did).
+    Stamping usage on the node that incurred it makes "which agent spent these
+    tokens" a single-span question with no join and no dependency on anyone
+    else's instrumentation staying correct.
+
+    `reasoning_tokens` is the one figure nothing else captures. The provider
+    returns it — LangChain surfaces it as
+    `usage_metadata["output_token_details"]["reasoning"]` — and no span in this
+    lab carried it, so "is this route spending its budget thinking?" was
+    unanswerable. On the remote route it is the dominant cost: 1545 reasoning
+    tokens behind a 287-character answer. A zero here is a real zero, meaning a
+    non-reasoning model, not a missing measurement.
+    """
+
+    calls: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    reasoning_tokens: int = 0
+    finish_reasons: list[str] = field(default_factory=list)
+    # Replies with no text AND no tool calls. A tool-call reply legitimately has
+    # empty content, so it does not count.
+    empty_outputs: int = 0
+
+    def add(self, reply: BaseMessage) -> None:
+        self.calls += 1
+        md = getattr(reply, "usage_metadata", None) or {}
+        self.input_tokens += md.get("input_tokens") or 0
+        self.output_tokens += md.get("output_tokens") or 0
+        self.reasoning_tokens += (md.get("output_token_details") or {}).get("reasoning") or 0
+        finish = (reply.response_metadata or {}).get("finish_reason")
+        if finish:
+            self.finish_reasons.append(finish)
+
+        content = reply.content
+        if not isinstance(content, str):
+            content = "".join(
+                b.get("text", "") if isinstance(b, dict) else str(b) for b in content
+            )
+        if not content.strip() and not getattr(reply, "tool_calls", None):
+            self.empty_outputs += 1
+
+    @property
+    def outcome(self) -> str:
+        """One filterable answer to "success, failure, or garbage?".
+
+        `finish_reason` alone cannot answer it, and the first run with
+        attribution proved why. The analyser truncated (`length`); the reporter,
+        handed that truncated hypothesis, returned one output token with
+        `finish_reason: "stop"` — an empty report that every finish-reason-based
+        check would score as a clean success.
+
+            truncated  a reply hit the token cap; its text is partial reasoning
+            empty      a reply ended normally with no text and no tool call
+            ok         neither
+
+        Precedence is worst-first, so a node that was both reports `truncated`.
+        Hard failures are not an outcome here: they raise, and the span records
+        the exception status on its own.
+        """
+        if "length" in self.finish_reasons:
+            return "truncated"
+        if self.empty_outputs:
+            return "empty"
+        return "ok"
+
+    def stamp(self, span: trace.Span, node: str) -> None:
+        """Write the totals onto the span passed in — never onto the ambient one.
+
+        The explicit span argument is the whole point. OpenLIT's LangChain handler
+        attaches its LLM span to the OTel context in `on_llm_start` and never
+        detaches it, because the detach is a cross-Task `contextvars` reset that
+        cannot succeed (CONTRIBUTIONS item 7). So after any model call
+        `trace.get_current_span()` returns OpenLIT's `chat <route>` span —
+        *already ended*, `is_recording()` False — and attributes written to it are
+        discarded. Measured, not guessed: that is exactly how the first version of
+        this method silently recorded nothing.
+
+        Hence each node owns a span it created and holds a reference to. Ambient
+        context is not a safe place to look up an attribution target while a third
+        party is mutating it.
+
+        Uses the semconv `gen_ai.usage.*` names because an `invoke_agent` span is
+        a GenAI span and the conventions allow usage on it. The consequence to
+        know: summing `gen_ai.usage.input_tokens` across *all* spans in a trace
+        now double-counts, because the gateway reports the same tokens. Aggregate
+        with a `gen_ai.operation.name` filter — which is how you would slice it
+        per agent anyway.
+
+        `gen_ai.usage.reasoning_tokens` is not a semantic convention. There is no
+        standard attribute for it yet; this is the obvious name in the existing
+        namespace, and it is flagged here so it is a known local extension rather
+        than something later mistaken for spec.
+        """
+        span.set_attribute("gen_ai.usage.input_tokens", self.input_tokens)
+        span.set_attribute("gen_ai.usage.output_tokens", self.output_tokens)
+        span.set_attribute("gen_ai.usage.reasoning_tokens", self.reasoning_tokens)
+        # The route, not the model. The workflow is never told which model served
+        # it; only the gateway knows that (`litellm.provider.model`).
+        span.set_attribute("gen_ai.request.model", settings.model_route)
+        span.set_attribute("triage.agent", node)
+        # "Was it repeated" — one call for the analyser and reporter by
+        # construction, one per round for the retriever.
+        span.set_attribute("triage.model_calls", self.calls)
+        span.set_attribute("triage.finish_reasons", self.finish_reasons)
+        span.set_attribute("triage.truncated", "length" in self.finish_reasons)
+        span.set_attribute("triage.empty_outputs", self.empty_outputs)
+        span.set_attribute("triage.outcome", self.outcome)
+        if self.outcome != "ok":
+            log.warning(
+                "%s outcome=%s (finish_reasons=%s, empty_outputs=%d) — its output "
+                "is not a usable answer, and the next node will receive it anyway",
+                node, self.outcome, self.finish_reasons, self.empty_outputs,
+            )
 
 
 def _model(max_tokens: int) -> ChatOpenAI:
@@ -239,6 +370,11 @@ async def _retriever(state: TriageState) -> dict[str, Any]:
     whose `tool_calls` nobody runs; evidence stays empty and the trace shows a
     model call that decided to do something and then did not.
     """
+    with _tracer.start_as_current_span("triage.agent retriever") as span:
+        return await _retrieve(state, span)
+
+
+async def _retrieve(state: TriageState, span: trace.Span) -> dict[str, Any]:
     async with tool_belt() as belt:
         if not belt.specs:
             log.error("no tools reachable — retriever has nothing to call")
@@ -254,9 +390,11 @@ async def _retriever(state: TriageState) -> dict[str, Any]:
             HumanMessage(f"Incident to investigate:\n\n{state['incident']}"),
         ]
         evidence: list[str] = []
+        usage = _Usage()
 
         for round_no in range(1, settings.max_tool_rounds + 1):
             reply: AIMessage = await model.ainvoke(messages)
+            usage.add(reply)
             messages.append(reply)
 
             if not reply.tool_calls:
@@ -274,12 +412,23 @@ async def _retriever(state: TriageState) -> dict[str, Any]:
         else:
             log.warning("retriever hit the %d-round cap", settings.max_tool_rounds)
 
-        log.info("retriever gathered %d evidence item(s)", len(evidence))
+        usage.stamp(span, "retriever")
+        log.info(
+            "retriever gathered %d evidence item(s) over %d model call(s); "
+            "tokens in=%d out=%d reasoning=%d",
+            len(evidence), usage.calls, usage.input_tokens,
+            usage.output_tokens, usage.reasoning_tokens,
+        )
         return {"evidence": evidence}
 
 
 async def _analyser(state: TriageState) -> dict[str, Any]:
     """Form a hypothesis from the evidence the retriever actually collected."""
+    with _tracer.start_as_current_span("triage.agent analyser") as span:
+        return await _analyse(state, span)
+
+
+async def _analyse(state: TriageState, span: trace.Span) -> dict[str, Any]:
     reply = await _model(settings.analyser_max_tokens).ainvoke(
         [
             SystemMessage(_ANALYSER_SYSTEM),
@@ -289,11 +438,19 @@ async def _analyser(state: TriageState) -> dict[str, Any]:
             ),
         ]
     )
+    usage = _Usage()
+    usage.add(reply)
+    usage.stamp(span, "analyser")
     return {"hypothesis": _text(reply, "analyser")}
 
 
 async def _reporter(state: TriageState) -> dict[str, Any]:
     """Write the summary from the hypothesis, with the evidence for citations."""
+    with _tracer.start_as_current_span("triage.agent reporter") as span:
+        return await _report(state, span)
+
+
+async def _report(state: TriageState, span: trace.Span) -> dict[str, Any]:
     reply = await _model(settings.reporter_max_tokens).ainvoke(
         [
             SystemMessage(_REPORTER_SYSTEM),
@@ -304,6 +461,9 @@ async def _reporter(state: TriageState) -> dict[str, Any]:
             ),
         ]
     )
+    usage = _Usage()
+    usage.add(reply)
+    usage.stamp(span, "reporter")
     return {"report": _text(reply, "reporter")}
 
 

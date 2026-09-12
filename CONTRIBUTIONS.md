@@ -11,7 +11,8 @@ kind of contribution it looks like (docs fix / example / bug report / code chang
 ### 1. Perses — ClickHouse datasource has no TraceQuery plugin
 
 **Project:** [perses/plugins](https://github.com/perses/plugins)
-**Status:** Verified at source level, 2026-09-09. Not yet filed.
+**Status:** Verified at source level, 2026-09-09. Tracked upstream by an existing issue, [perses/perses#4202](https://github.com/perses/perses/issues/4202).
+PR opened as a draft on 2026-09-12: [perses/plugins#813](https://github.com/perses/plugins/pull/813).
 
 The project brief suspected this; it checks out, and it is stronger than "the docs
 don't mention it".
@@ -39,9 +40,36 @@ the structure of the existing log query plugin and the TraceQuery contract used 
 Jaeger and Tempo plugins. Non-trivial but well-bounded, and it is the single highest-value
 target in this project.
 
-**Next step:** open an issue against perses/plugins describing the gap and asking whether
-a ClickHouse TraceQuery is wanted and what trace schema it should assume (the OTel
-`clickhouseexporter` `otel_traces` layout being the obvious candidate), before writing code.
+**Filed as — no new issue.** The gap was already tracked upstream as [perses/perses#4202](https://github.com/perses/perses/issues/4202),
+"Plugin Request: Clickhouse full support", opened by a maintainer and labelled `help wanted`. One of its
+tasks is "a generic trace explorer where Clickhouse traces could be used as a datasource", and a TraceQuery
+plugin is the prerequisite for it. We commented there on 2026-09-11 rather than opening a duplicate, and a
+maintainer (@Nexucis) replied the same day that no one is working on it. The code went straight to a PR:
+[perses/plugins#813](https://github.com/perses/plugins/pull/813), `[FEATURE] ClickHouse: add trace query plugin`, opened as a draft on 2026-09-12.
+
+**What the PR does:** `ClickHouseTraceQuery` reads the `clickhouseexporter` `otel_traces` schema. A trace ID
+returns the whole trace, for the Tracing Gantt Chart; a SQL query returning one row per span is grouped into
+search results, for the Trace Table. That is the contract the Tempo plugin already uses, so `${traceId}`
+drill-down links work unchanged. CUE schema, Go SDK, docs and tests are included, and it was verified end to end
+(Collector → ClickHouse → Perses) in a throwaway stack kept outside this repository.
+
+**Decision flagged in the PR as the one most likely to change:** trace ID lookups filter on `TraceId` with no
+time bound, so a trace opens from a link whatever the dashboard's time range, relying on the bloom filter index
+the exporter creates. The exporter's `otel_traces_trace_id_ts` table would bound the scan on large tables, but it
+only exists when the exporter created the schema, so depending on it would break custom tables and views. The
+choice is documented in the plugin's data model docs and highlighted for the reviewers.
+
+**Found along the way — noted in the PR, not filed:**
+- The existing ClickHouse Go SDK docs (`docs/clickhouse/go-sdk/`) import a module path that doesn't exist
+  (`github.com/perses/perses-plugins/clickhouse/sdk/go/v1/...`) and use builders the SDK doesn't have
+  (`query.LogQuery`, `query.TimeSeriesQuery`, `query.Format`), and `docs/clickhouse/model.md` documents a
+  `format` field that the query schemas reject. No existing issue found; a candidate docs fix once this PR lands.
+- The Tracing Gantt Chart keeps the previous trace's viewport and selected span when its trace changes in place,
+  for example after following a Trace Table link to the same dashboard, because `TracingGanttChart` initialises
+  both with `useState` and the panel doesn't key it by trace. Independent of the query plugin; left for later.
+
+**Next step:** screenshots into the PR description, mark it ready for review, then answer the review — starting
+with the time-bound decision above.
 
 ### 2. OpenLIT — the ClickHouse schema contract with an existing Collector is undocumented
 
@@ -271,7 +299,7 @@ inside the released image shows the missing segment without deploying anything. 
 build/export omission (route group or `export const dynamic` missing on those handlers)
 rather than deliberate removal, since the client half shipped.
 
-### 7. OpenLIT SDK — the LangChain callback handler bypasses its own `safe_detach`, so every async model call logs an ERROR
+### 7. OpenLIT SDK — an unguarded `ContextVar.reset()` in the LangChain handler leaks the LLM span, severing agent→model attribution
 
 **Project:** [openlit/openlit](https://github.com/openlit/openlit)
 **Status:** Hit during phase 1 step 6, 2026-09-10, on openlit 1.45.0. Not yet filed.
@@ -306,20 +334,111 @@ cross-Context Token can be handled at DEBUG instead of ERROR, and takes an
 attempted. Its docstring describes this exact failure mode in detail. Other
 instrumentations use it. The LangChain handler does not.
 
-**Consequence:** harmless to the data, expensive to trust. The run it was loudest on
-produced 76 spans across five services with correct parenting and no error spans —
-contextvars are per-Task, so the attaching Task's context reverts when that Task ends.
-But it is an ERROR-level stack trace on every single model call, which is exactly the
-noise that trains an operator to stop reading ERROR lines.
+**Consequence (as first written, 2026-09-10 — wrong, superseded below):** "harmless to
+the data, expensive to trust", on the evidence of one run with 76 spans, correct-looking
+parenting and no error spans. That run was never checked for spans whose parent does not
+exist, and it had them. The ERROR line is not harmless: it is the visible symptom of a
+context failure that, one statement later, drops spans. The original reasoning is kept
+here rather than deleted because the mistake is instructive — "no error spans and the tree
+looks right" is not evidence of a complete trace; a query for dangling `ParentSpanId`s is.
 
 **What we did instead:** a `logging.Filter` on the `opentelemetry.context` logger that
 drops only this message (`apps/workflow/src/workflow/telemetry.py`), rather than
 silencing the logger, so a genuine context-management bug elsewhere still surfaces.
 
-**Contribution type:** code change, and a small one — route the two
-`otel_context.detach(ctx_token)` calls in the LangChain callback handler through
-`safe_detach`, passing the Task captured at attach time. The helper, the rationale and
-the docstring are already in the repository.
+**Escalation, 2026-09-10 — the ERROR line was the visible half of a span leak.**
+
+The log noise is not the damage. `on_llm_end` runs, in this order, inside one
+`try` whose handler logs at **DEBUG**:
+
+```python
+try:
+    ...
+    if holder.token and isinstance(holder.token, tuple):
+        fw_token, ctx_token = holder.token
+        try:
+            otel_context.detach(ctx_token)     # swallowed internally, logs ERROR
+        except Exception:
+            pass
+        reset_framework_llm_active(fw_token)   # NOT protected
+    self._end_span(run_id)                     # unreachable if the line above raises
+except Exception as e:
+    logger.debug("Error in on_llm_end: %s", e) # invisible at default levels
+```
+
+And `reset_framework_llm_active` (`openlit/__helpers.py:91`) is a bare reset:
+
+```python
+def reset_framework_llm_active(token):
+    _framework_llm_span_active.reset(token)
+```
+
+Same cross-Task `ContextVar` problem as the detach, same guaranteed `ValueError` under an
+async graph — but outside the inner `try`. So it raises, the outer handler logs at DEBUG,
+and **`self._end_span(run_id)` never runs**. An OTel span is exported on `end()`; a span
+that is never ended is never exported.
+
+**Measured consequence in this lab:** 69 `POST` spans and 48 `mcp tools/call` spans on
+`triage-workflow` have `ParentSpanId` values that exist in no row of `otel_traces`. The
+missing rows are the LLM spans OpenLIT started and never ended. The practical effect is
+that the chain
+
+```
+invoke_agent retriever  ->  [missing]  ->  POST  ->  litellm POST /v1/chat/completions  ->  chat local
+```
+
+has a hole exactly where the agent's identity meets the model call. Token counts survive
+(they are on the gateway's span), and agent names survive (they are on the node span), but
+**the two cannot be joined through the trace tree** — so "which agent spent these tokens",
+the single most useful attribution question in an agent platform, is unanswerable from the
+traces despite both halves being present.
+
+This also means the ERROR line is worth more than it looks. It is emitted by the detach in
+step one; the span leak happens silently in step two. Filtering the ERROR (as this lab
+does) removes the only default-visible signal that cross-Task context failures are
+occurring at all. The filter stays, because the message is genuinely not actionable — but
+it is documented here as suppressing a symptom whose cause also drops data.
+
+**Third consequence, 2026-09-10 — the ended span stays attached as current context.**
+
+Guarding `reset_framework_llm_active` lets `_end_span` run, which fixes the export: in
+the next run, spans with a non-existent parent went from 69 + 48 to **0**, and OpenLIT's
+`chat <route>` spans appeared 1:1 with the gateway's. It does not fix the detach, and
+cannot — a cross-Task Token genuinely cannot be reset. So the LLM span is ended but never
+detached, and it stays attached to the OTel context of the Task that made the call.
+
+Measured by logging `trace.get_current_span()` inside each LangGraph node after its model
+call. All three nodes reported the same thing:
+
+```
+current span = 'chat remote'  recording=False
+```
+
+Not the node's `invoke_agent` span — OpenLIT's already-ended LLM span. Any attribute
+written to "the current span" after a model call is written to a finished span and
+silently discarded; any span started after a model call in that Task parents onto a dead
+span. This is how a first attempt to record per-agent token usage on the node span
+recorded nothing at all, with no error.
+
+**What we did instead:** each node opens its own span with a tracer the workflow owns and
+writes to that span object by reference, never via `get_current_span()`
+(`apps/workflow/src/workflow/triage_graph.py`, `_Usage.stamp`). The guard on
+`reset_framework_llm_active` is applied before `openlit.init()`, because
+`_create_callback_handler_class()` closes over the helper at init time
+(`apps/workflow/src/workflow/telemetry.py`).
+
+**Contribution type:** code change, still small, now two-part:
+
+1. Route the two `otel_context.detach(ctx_token)` calls through the existing
+   `safe_detach`, passing the Task captured at attach time.
+2. Guard `reset_framework_llm_active` — either catch `ValueError` in the helper (matching
+   what `safe_detach` already does for the OTel context) or move `self._end_span(run_id)`
+   into a `finally`, so ending the span cannot be skipped by a context-teardown failure.
+   The second is the more robust shape regardless: span closure should not depend on
+   contextvar bookkeeping succeeding.
+
+The same unguarded pattern appears in `instrumentation/litellm/litellm.py:156,176` and
+`instrumentation/strands/processor.py:177`, so the fix is likely not LangChain-specific.
 
 ### 8. OpenLIT — the telemetry page reads pre-semconv usage attribute names, so cost and tokens read zero
 
@@ -388,4 +507,6 @@ Carried from the project brief. These are suspected gaps to verify, not findings
 
 ## Filed
 
-_Nothing filed yet._
+| Item | Upstream | Kind | Date |
+| :- | :- | :- | :- |
+| 1. Perses — ClickHouse trace query | [perses/perses#4202](https://github.com/perses/perses/issues/4202) (existing issue, commented) · [perses/plugins#813](https://github.com/perses/plugins/pull/813) | Code change, PR (draft) | 2026-09-12 |

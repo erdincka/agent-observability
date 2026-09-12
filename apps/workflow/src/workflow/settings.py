@@ -55,7 +55,11 @@ class Settings:
     # Costs nothing on the local route, which stops at its own stop token well
     # before the cap.
     retriever_max_tokens: int = int(os.getenv("RETRIEVER_MAX_TOKENS", "1024"))
-    analyser_max_tokens: int = int(os.getenv("ANALYSER_MAX_TOKENS", "4096"))
+    # 8192, not 4096: the first run with per-agent attribution showed the
+    # analyser spending 4792 reasoning tokens on one call and truncating, which
+    # emptied the report downstream. A cap is a ceiling, not an allocation —
+    # headroom costs nothing on runs that do not use it.
+    analyser_max_tokens: int = int(os.getenv("ANALYSER_MAX_TOKENS", "8192"))
     reporter_max_tokens: int = int(os.getenv("REPORTER_MAX_TOKENS", "8192"))
 
 
