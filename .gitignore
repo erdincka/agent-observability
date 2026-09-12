@@ -3,9 +3,6 @@ __pycache__/
 *.py[cod]
 .venv/
 venv/
-# Local convenience only — the build resolves from pyproject.toml, so a lock
-# file here locks nothing that ships. Testing and deployment go through the image.
-uv.lock
 .pytest_cache/
 .ruff_cache/
 *.egg-info/

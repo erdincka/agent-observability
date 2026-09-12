@@ -15,8 +15,11 @@ spec:
       restartPolicy: Never
       containers:
         - name: workflow
-          image: 10.1.1.240:5000/agent-obs/workflow:0.1.0
-          imagePullPolicy: Always   # same mutable-tag trap as the MCP servers
+          # Tag and pull policy are filled in by `make workflow-probe` from
+          # scripts/image-tag.sh: an immutable commit tag with IfNotPresent, or a
+          # `-dirty` tag with Always. Applying this file directly will not work.
+          image: 10.1.1.240:5000/agent-obs/workflow:__WORKFLOW_TAG__
+          imagePullPolicy: __PULL_POLICY__
           args: ["--probe"]
           env:
             - { name: OTEL_SERVICE_NAME, value: "triage-workflow" }

@@ -12,6 +12,16 @@ ROUTE       ?= local
 APP_NS      := agent-obs-app
 COLLECTOR_CHART_VERSION := 0.172.1
 OPENLIT_CHART_VERSION   := 1.24.0
+REGISTRY    := 10.1.1.240:5000
+
+# Immutable image tags: the last commit that touched each image's inputs, with
+# `-dirty` appended when those inputs have uncommitted changes. Recursive (=), so
+# they are read when used. See scripts/image-tag.sh and scripts/build-image.sh.
+WORKFLOW_TAG = $(shell scripts/image-tag.sh workflow)
+MCP_TAG      = $(shell scripts/image-tag.sh mcp)
+# A clean tag names exactly one image, so a cached copy is correct. A -dirty tag
+# is rebuilt in place, so it has to be pulled every time.
+pull_policy  = $(if $(findstring -dirty,$(1)),Always,IfNotPresent)
 
 .DEFAULT_GOAL := help
 
@@ -175,11 +185,7 @@ litellm: env-check secrets litellm-db ## Render config and deploy the LiteLLM ga
 		--namespace $(PLATFORM_NS) \
 		--from-file=config.yaml=deploy/50-litellm/config.rendered.yaml \
 		--dry-run=client -o yaml | kubectl apply -f -
-	@set -a; . ./.env; set +a; \
-	sum=$$( { cat deploy/50-litellm/config.rendered.yaml; \
-		echo "$$OPENROUTER_API_KEY$$LITELLM_MASTER_KEY$$OLLAMA_BASE_URL"; \
-		echo "$$LITELLM_SALT_KEY$$LITELLM_UI_USERNAME$$LITELLM_UI_PASSWORD"; } \
-		| shasum -a 256 | cut -c1-16); \
+	@sum=$$(./scripts/litellm-checksum.sh); \
 	sed "s/REPLACED_AT_DEPLOY/$$sum/" deploy/50-litellm/litellm.yaml | kubectl apply -f -
 	kubectl apply -f deploy/50-litellm/httproute.yaml
 	kubectl rollout status deployment/litellm -n $(PLATFORM_NS) --timeout=300s
@@ -202,8 +208,10 @@ workflow-image: ## Build and push the workflow image on the pve context
 
 .PHONY: workflow-probe
 workflow-probe: ## Run the plumbing proof: a trace starting in the workflow
+	./scripts/require-image.sh workflow
 	-kubectl delete job workflow-probe -n $(APP_NS) --ignore-not-found
-	kubectl apply -f deploy/70-workflow/probe-job.yaml
+	sed -e 's|__WORKFLOW_TAG__|$(WORKFLOW_TAG)|g' -e 's|__PULL_POLICY__|$(call pull_policy,$(WORKFLOW_TAG))|g' \
+		deploy/70-workflow/probe-job.yaml | kubectl apply -f -
 	kubectl wait --for=condition=complete job/workflow-probe -n $(APP_NS) --timeout=600s
 	kubectl logs -n $(APP_NS) job/workflow-probe
 
@@ -211,25 +219,31 @@ workflow-probe: ## Run the plumbing proof: a trace starting in the workflow
 # INCIDENT and ROUTE are templated into the Job so a comparison run is a flag,
 # not an edit: `make workflow-triage ROUTE=remote INCIDENT=no-evidence`.
 workflow-triage: ## Run the triage workflow (INCIDENT=, ROUTE=)
+	./scripts/require-image.sh workflow
 	-kubectl delete job workflow-triage -n $(APP_NS) --ignore-not-found
 	sed -e 's|__INCIDENT__|$(INCIDENT)|' -e 's|__ROUTE__|$(ROUTE)|' \
+		-e 's|__WORKFLOW_TAG__|$(WORKFLOW_TAG)|g' -e 's|__PULL_POLICY__|$(call pull_policy,$(WORKFLOW_TAG))|g' \
 		deploy/70-workflow/triage-job.yaml | kubectl apply -f -
 	kubectl wait --for=condition=complete job/workflow-triage -n $(APP_NS) --timeout=900s
 	kubectl logs -n $(APP_NS) job/workflow-triage
 
 .PHONY: workflow-incidents
 workflow-incidents: ## List the fixed incident corpus
+	@./scripts/require-image.sh workflow
 	kubectl run workflow-incidents-$$$$ --namespace $(APP_NS) --rm -i --quiet \
-		--restart=Never --image=10.1.1.240:5000/agent-obs/workflow:0.1.0 \
+		--restart=Never --image=$(REGISTRY)/agent-obs/workflow:$(WORKFLOW_TAG) \
+		--image-pull-policy=$(call pull_policy,$(WORKFLOW_TAG)) \
 		--command -- python -m workflow --list
 
 .PHONY: mcp-image
 mcp-image: ## Build and push the MCP servers image (context = repo root)
-	./scripts/build-image.sh mcp 0.1.0 .
+	./scripts/build-image.sh mcp .
 
 .PHONY: mcp
 mcp: ## Deploy the three MCP tool servers
-	kubectl apply -f deploy/80-mcp/servers.yaml
+	./scripts/require-image.sh mcp
+	sed -e 's|__MCP_TAG__|$(MCP_TAG)|g' -e 's|__PULL_POLICY__|$(call pull_policy,$(MCP_TAG))|g' \
+		deploy/80-mcp/servers.yaml | kubectl apply -f -
 	kubectl rollout status deployment/mcp-metrics  -n $(APP_NS) --timeout=300s
 	kubectl rollout status deployment/mcp-changes  -n $(APP_NS) --timeout=300s
 	kubectl rollout status deployment/mcp-runbooks -n $(APP_NS) --timeout=300s
@@ -240,3 +254,9 @@ mcp-probe: ## List the tools each MCP server exposes
 
 .PHONY: step5
 step5: mcp-image mcp mcp-probe ## Everything in step 5
+
+# ------------------------------------------------------------ verification ---
+
+.PHONY: drift
+drift: env-check ## Does the cluster run what this repo describes? (kubectl diff + helm values)
+	./scripts/drift.sh

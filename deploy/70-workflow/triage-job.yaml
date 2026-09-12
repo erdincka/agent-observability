@@ -1,7 +1,8 @@
 # Runs the triage graph once — the real workflow, not the plumbing proof.
 #
 # A Job rather than a Deployment because a triage run is a one-shot with an end,
-# not a service. `make workflow-triage` templates INCIDENT and ROUTE into it, so
+# not a service. `make workflow-triage` templates INCIDENT, ROUTE and the image
+# tag into it, so
 # "same incident, other model route" is a flag rather than an edit.
 apiVersion: batch/v1
 kind: Job
@@ -15,8 +16,10 @@ spec:
       restartPolicy: Never
       containers:
         - name: workflow
-          image: 10.1.1.240:5000/agent-obs/workflow:0.1.0
-          imagePullPolicy: Always   # same mutable-tag trap as the MCP servers
+          # Immutable commit tag with IfNotPresent, or a `-dirty` tag with Always;
+          # see scripts/build-image.sh.
+          image: 10.1.1.240:5000/agent-obs/workflow:__WORKFLOW_TAG__
+          imagePullPolicy: __PULL_POLICY__
           env:
             - { name: OTEL_SERVICE_NAME, value: "triage-workflow" }
 
@@ -31,9 +34,8 @@ spec:
             - { name: MODEL_ROUTE, value: "__ROUTE__" }
 
             # Stamped onto the run span so a trace says which build produced it.
-            # Mutable tag, so this is the tag and not yet a digest — see the
-            # imagePullPolicy note above.
-            - { name: WORKFLOW_IMAGE, value: "agent-obs/workflow:0.1.0" }
+            # The tag is immutable, so this names exactly one image.
+            - { name: WORKFLOW_IMAGE, value: "agent-obs/workflow:__WORKFLOW_TAG__" }
 
             - name: GATEWAY_API_KEY
               valueFrom: { secretKeyRef: { name: gateway-auth, key: GATEWAY_API_KEY } }

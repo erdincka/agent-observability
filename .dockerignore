@@ -1,0 +1,8 @@
+# The MCP image builds with the repository root as its context, so everything not
+# excluded here is uploaded to the build host. Secrets first.
+.env
+*.env
+deploy/50-litellm/config.rendered.yaml
+**/.venv
+**/__pycache__
+**/node_modules

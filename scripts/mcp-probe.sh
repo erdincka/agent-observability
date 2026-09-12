@@ -7,7 +7,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 kubectl run "mcp-probe-$$" --namespace agent-obs-app --rm -i --quiet --restart=Never \
-    --image=10.1.1.240:5000/agent-obs/mcp:0.1.0 -- python - <<'PY'
+    --image="10.1.1.240:5000/agent-obs/mcp:$(scripts/image-tag.sh mcp)" -- python - <<'PY'
 import asyncio
 
 from mcp import ClientSession

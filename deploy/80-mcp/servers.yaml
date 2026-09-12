@@ -7,6 +7,8 @@
 # and phase 2's per-role tool access needs somewhere to actually enforce.
 #
 # One image backs all three; the Deployment's args choose which server runs.
+# The image tag and pull policy are filled in by `make mcp`; applying this file
+# directly will not work.
 
 ---
 # mcp-metrics — Queries the Prometheus already running in this lab.
@@ -37,12 +39,11 @@ spec:
     spec:
       containers:
         - name: server
-          image: 10.1.1.240:5000/agent-obs/mcp:0.1.0
-          # A mutable tag defaults to IfNotPresent, so a rebuilt 0.1.0 is never
-          # re-pulled and the node quietly keeps serving the previous code —
-          # you debug a source file that is not the one running. Always, while
-          # the tag is mutable; pin a digest before this is called reproducible.
-          imagePullPolicy: Always
+          # Immutable commit tag with IfNotPresent, or a `-dirty` tag with Always.
+          # The 0.1.0 tag this replaced was rebuilt in place and nodes kept serving
+          # cached code; see scripts/build-image.sh.
+          image: 10.1.1.240:5000/agent-obs/mcp:__MCP_TAG__
+          imagePullPolicy: __PULL_POLICY__
           command: ["python", "-m", "mcpservers.metrics_server"]
           ports:
             - { name: http, containerPort: 8080 }
@@ -83,12 +84,11 @@ spec:
     spec:
       containers:
         - name: server
-          image: 10.1.1.240:5000/agent-obs/mcp:0.1.0
-          # A mutable tag defaults to IfNotPresent, so a rebuilt 0.1.0 is never
-          # re-pulled and the node quietly keeps serving the previous code —
-          # you debug a source file that is not the one running. Always, while
-          # the tag is mutable; pin a digest before this is called reproducible.
-          imagePullPolicy: Always
+          # Immutable commit tag with IfNotPresent, or a `-dirty` tag with Always.
+          # The 0.1.0 tag this replaced was rebuilt in place and nodes kept serving
+          # cached code; see scripts/build-image.sh.
+          image: 10.1.1.240:5000/agent-obs/mcp:__MCP_TAG__
+          imagePullPolicy: __PULL_POLICY__
           command: ["python", "-m", "mcpservers.changes_server"]
           ports:
             - { name: http, containerPort: 8080 }
@@ -129,12 +129,11 @@ spec:
     spec:
       containers:
         - name: server
-          image: 10.1.1.240:5000/agent-obs/mcp:0.1.0
-          # A mutable tag defaults to IfNotPresent, so a rebuilt 0.1.0 is never
-          # re-pulled and the node quietly keeps serving the previous code —
-          # you debug a source file that is not the one running. Always, while
-          # the tag is mutable; pin a digest before this is called reproducible.
-          imagePullPolicy: Always
+          # Immutable commit tag with IfNotPresent, or a `-dirty` tag with Always.
+          # The 0.1.0 tag this replaced was rebuilt in place and nodes kept serving
+          # cached code; see scripts/build-image.sh.
+          image: 10.1.1.240:5000/agent-obs/mcp:__MCP_TAG__
+          imagePullPolicy: __PULL_POLICY__
           command: ["python", "-m", "mcpservers.runbooks_server"]
           ports:
             - { name: http, containerPort: 8080 }
