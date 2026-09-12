@@ -14,7 +14,7 @@ see step 2 in LEARNINGS.md for what happens if you reverse 20 and 30.
 | `45-litellm-db/` | PostgreSQL for the gateway's identity tables (CNPG) | `make litellm-db` |
 | `50-litellm/` | LiteLLM gateway — every model call goes through it | `make litellm` |
 | `60-postgres/` | PostgreSQL for the workflow's own state (CNPG) | `make postgres` |
-| `70-workflow/` | The LangGraph workflow probe | `make workflow-probe` |
+| `70-workflow/` | The LangGraph workflow as one-shot Jobs: the plumbing probe, and the triage graph (templated by make — applying `triage-job.yaml` directly leaves `__INCIDENT__` unfilled) | `make workflow-probe`, `make workflow-triage INCIDENT= ROUTE=` |
 | `80-mcp/` | Three MCP tool servers over streamable HTTP | `make mcp` |
 
 `05-minio/` is numbered before `00-namespace/` because it is not in the cluster at all —
