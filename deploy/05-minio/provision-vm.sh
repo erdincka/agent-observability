@@ -98,17 +98,26 @@ for i in $(seq 1 90); do
 done
 
 say "Installing MinIO on $MINIO_VM_IP"
+# The installer itself holds no secrets, so it can travel by scp.
 scp -q deploy/05-minio/install-minio.sh "$MINIO_VM_USER@$MINIO_VM_IP:/tmp/install-minio.sh"
-# Credentials go over the SSH channel as environment, never onto a disk we do
-# not control and never into an argv another process could read.
-ssh "$MINIO_VM_USER@$MINIO_VM_IP" \
-  "sudo -E env \
-     MINIO_ROOT_USER='$MINIO_ROOT_USER' \
-     MINIO_ROOT_PASSWORD='$MINIO_ROOT_PASSWORD' \
-     MINIO_VERSION='$MINIO_VERSION' MINIO_SHA256='$MINIO_SHA256' \
-     MC_VERSION='$MC_VERSION' MC_SHA256='$MC_SHA256' \
-     MINIO_FORCE_FORMAT='${MINIO_FORCE_FORMAT:-0}' \
-     bash /tmp/install-minio.sh && rm -f /tmp/install-minio.sh"
+# Its inputs go over stdin and are sourced by the root shell — never onto the
+# command line. The previous version passed them as `sudo -E env
+# MINIO_ROOT_PASSWORD='...' bash ...` under a comment claiming "never into an
+# argv". It was argv, and sudo writes every command line it runs to the journal
+# and /var/log/auth.log (syslog:adm 0640), so the root password sat in both,
+# readable by the adm group. Now sudo logs only the fixed `bash -c` string below.
+# Same pattern as bootstrap-buckets.sh. TODO.md item 5 covers the credential
+# that already leaked.
+{
+  printf 'MINIO_ROOT_USER=%q\n'     "$MINIO_ROOT_USER"
+  printf 'MINIO_ROOT_PASSWORD=%q\n' "$MINIO_ROOT_PASSWORD"
+  printf 'MINIO_VERSION=%q\n'       "$MINIO_VERSION"
+  printf 'MINIO_SHA256=%q\n'        "$MINIO_SHA256"
+  printf 'MC_VERSION=%q\n'          "$MC_VERSION"
+  printf 'MC_SHA256=%q\n'           "$MC_SHA256"
+  printf 'MINIO_FORCE_FORMAT=%q\n'  "${MINIO_FORCE_FORMAT:-0}"
+} | ssh "$MINIO_VM_USER@$MINIO_VM_IP" \
+  "sudo bash -c 'set -a; . /dev/stdin; set +a; bash /tmp/install-minio.sh </dev/null && rm -f /tmp/install-minio.sh'"
 
 say "MinIO is up"
 echo "  S3 API   http://$MINIO_VM_IP:9000"

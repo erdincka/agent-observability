@@ -12,7 +12,7 @@ kind of contribution it looks like (docs fix / example / bug report / code chang
 
 **Project:** [perses/plugins](https://github.com/perses/plugins)
 **Status:** Verified at source level, 2026-09-09. Tracked upstream by an existing issue, [perses/perses#4202](https://github.com/perses/perses/issues/4202).
-PR opened as a draft on 2026-09-12: [perses/plugins#813](https://github.com/perses/plugins/pull/813).
+PR opened as a draft on 2026-09-12: [perses/plugins#813](https://github.com/perses/plugins/pull/813); open and ready for review as of 2026-09-13 (GitHub reports `draft: false`).
 
 The project brief suspected this; it checks out, and it is stronger than "the docs
 don't mention it".
@@ -68,8 +68,8 @@ choice is documented in the plugin's data model docs and highlighted for the rev
   for example after following a Trace Table link to the same dashboard, because `TracingGanttChart` initialises
   both with `useState` and the panel doesn't key it by trace. Independent of the query plugin; left for later.
 
-**Next step:** screenshots into the PR description, mark it ready for review, then answer the review — starting
-with the time-bound decision above.
+**Next step:** answer the review, starting with the time-bound decision above. The PR is already out of draft;
+add screenshots to the description if they are not there yet.
 
 ### 2. OpenLIT — the ClickHouse schema contract with an existing Collector is undocumented
 
@@ -198,7 +198,7 @@ it is not obvious, and the people most likely to hit it are the ones who care mo
 
 ### 5. GenAI semconv — nothing distinguishes a gateway's span for a model call from the client's span for the same call
 
-**Projects:** [OTel GenAI semantic conventions](https://github.com/open-telemetry/semantic-conventions),
+**Projects:** [OTel GenAI semantic conventions](https://github.com/open-telemetry/semantic-conventions-genai),
 touching [openlit](https://github.com/openlit/openlit) and [litellm](https://github.com/BerriAI/litellm).
 **Status:** Observed in phase 1 step 4, 2026-09-09. Not yet filed. Probably the most
 practically consequential finding so far, because it produces wrong numbers silently.
@@ -243,6 +243,11 @@ would look completely plausible.
 **What we did instead:** nothing yet. Recorded before writing any query that works around
 it, because the workaround (filtering by `ServiceName`, or picking the innermost span) is
 local, fragile, and would hide the gap permanently.
+
+**Where to file (updated 2026-09-13):** not `open-telemetry/semantic-conventions`. The GenAI conventions
+moved to [`open-telemetry/semantic-conventions-genai`](https://github.com/open-telemetry/semantic-conventions-genai)
+(created 2026-05-05), and the core registry marks every `gen_ai.*` attribute deprecated-and-moved as of
+release v1.44.0. The same applies to anything else in this file aimed at the GenAI conventions.
 
 **Contribution type:** issue against the semantic conventions proposing a way to mark a
 span as an intermediary's view of an operation reported elsewhere. Possibly also an issue
@@ -492,21 +497,66 @@ with the legacy ones as fallback (`COALESCE`-style, or
 `input_tokens + output_tokens` when `total_tokens` is absent), and take cost from a
 provider-namespaced attribute when `gen_ai.usage.cost` is missing.
 
+### 9. LiteLLM — gateway spans carry no reasoning-token count, and `output_tokens` excludes reasoning against the semconv's SHOULD
+
+**Project:** [BerriAI/litellm](https://github.com/BerriAI/litellm); the provider half is unconfirmed
+**Status:** Found reviewing run `e55d79a95f25` (remote route, `nvidia/nemotron-3.5-lightning:free`), 2026-09-13,
+on LiteLLM 1.100.0. Not filed.
+
+The GenAI conventions define `gen_ai.usage.reasoning.output_tokens` — status Development, present since
+semconv v1.41.0 (2026-04-28) — with the note that its value *SHOULD be included in*
+`gen_ai.usage.output_tokens`. For the analyser's single model call in that run:
+
+```
+                                  output_tokens   reasoning tokens
+litellm-gateway  chat remote      1081            (no attribute)
+triage-workflow  chat remote      1081            (no attribute)
+LangChain usage_metadata          1081            1149   <- output_token_details["reasoning"]
+```
+
+Two separate problems:
+
+1. **The gateway emits no reasoning count at all.** It is the one component every model call passes
+   through, and the natural place for a platform team to answer "was reasoning used, and how much". The
+   figure is in the gateway's own response — `langchain-openai` reads it from
+   `usage.completion_tokens_details.reasoning_tokens` — so LiteLLM has the number and does not put it on
+   the span. That half is LiteLLM's.
+2. **`output_tokens` cannot include reasoning here:** 1149 reasoning tokens against 1081 output, on one
+   call. Summing the portable attribute under-reports what the model generated on reasoning routes — by
+   roughly half on this call. OpenAI's own convention counts reasoning inside completion tokens, so the
+   likeliest origin is the provider's accounting passed through unchanged. One raw response body would
+   settle which layer it is.
+
+Adjacent: the conventions also define `gen_ai.request.reasoning.level`, and no span in this lab carries
+it, so "was reasoning *requested*" is unanswerable from telemetry too.
+
+**Why it matters here:** token consumption and whether reasoning was enabled are core attribution questions
+for this lab, and the gateway is phase 2's audit control point. Today both are only answerable client-side,
+by code that knows which LangChain field to read.
+
+**What we did instead:** the workflow stamps reasoning tokens onto its own `triage.agent` node spans
+(`apps/workflow/src/workflow/triage_graph.py`, `_Usage`). That works for this client and for no other.
+
+**Contribution type:** issue against LiteLLM — emit `gen_ai.usage.reasoning.output_tokens` from
+`completion_tokens_details.reasoning_tokens`, and state whether `gen_ai.usage.output_tokens` is normalised
+to include it. Capture a raw response first, so the report says which half belongs to whom.
+
 ## Watch list
 
-Carried from the project brief. These are suspected gaps to verify, not findings:
+Carried from the project brief. These are suspected gaps to verify, not findings. Status column updated
+2026-09-13 with what phase 1 established:
 
-| Project | Suspected gap | Verify by |
+| Project | Suspected gap | Status |
 | :- | :- | :- |
-| LangGraph | OpenTelemetry instrumentation known to be incomplete upstream | Phase 1, step 7 |
-| OpenLIT | Instrumentation coverage — which spans we still hand-roll | Phase 1, step 7 (schema-contract gap already promoted to item 2) |
-| OTel GenAI semconv | Cannot express multi-agent handoff semantics | Phase 1, step 7 |
-| LiteLLM | GenAI semconv coverage where it meets MCP tool calls | Phase 1, step 8 (model-identity gap already promoted to item 3) |
+| LangGraph | OpenTelemetry instrumentation known to be incomplete upstream | Not the gap: OpenLIT emits `invoke_workflow` and one `invoke_agent <node>` span per node with `gen_ai.agent.name`. What broke was span *export* (item 7). |
+| OpenLIT | Instrumentation coverage — which spans we still hand-roll | Better than assumed: graph nodes, MCP client and MCP server all instrumented out of the box. Hand-rolled: per-agent usage and outcome spans, and the span-leak guard (item 7). |
+| OTel GenAI semconv | Cannot express multi-agent handoff semantics | Confirmed: `semantic-conventions-genai@main` has `invoke_agent` and `gen_ai.agent.name`/`id`, and no handoff concept anywhere. How this lab represents a handoff is still open. |
+| LiteLLM | GenAI semconv coverage where it meets MCP tool calls | Moot as framed: MCP calls never pass through the gateway, which sees model calls only. Model-identity gap is item 3; reasoning tokens are item 9. |
 | ~~Perses~~ | ~~ClickHouse trace-query SDK missing~~ | **Verified — promoted to Open, item 1** |
-| OpenLIT | Whether other tabs share the logs tab's missing-route defect | Any tab that renders empty or throws a JSON parse error |
+| OpenLIT | Whether other tabs share the logs tab's missing-route defect | Open — check any tab that renders empty or throws a JSON parse error. |
 
 ## Filed
 
 | Item | Upstream | Kind | Date |
 | :- | :- | :- | :- |
-| 1. Perses — ClickHouse trace query | [perses/perses#4202](https://github.com/perses/perses/issues/4202) (existing issue, commented) · [perses/plugins#813](https://github.com/perses/plugins/pull/813) | Code change, PR (draft) | 2026-09-12 |
+| 1. Perses — ClickHouse trace query | [perses/perses#4202](https://github.com/perses/perses/issues/4202) (existing issue, commented) · [perses/plugins#813](https://github.com/perses/plugins/pull/813) | Code change, PR (ready for review) | 2026-09-12 |

@@ -37,7 +37,11 @@ spec:
     spec:
       containers:
         - name: litellm
-          image: ghcr.io/berriai/litellm:main-stable
+          # Pinned to the version that was already running. `main-stable` moves:
+          # on 2026-09-13 the pod ran v1.100.0 (sha256:c8756e7b...) while
+          # main-stable already pointed at another build (sha256:a3715fa7...), so
+          # the next pod restart would have silently changed the gateway.
+          image: ghcr.io/berriai/litellm:v1.100.0
           args: ["--config", "/etc/litellm/config.yaml", "--port", "4000"]
           ports:
             - { name: http, containerPort: 4000 }
