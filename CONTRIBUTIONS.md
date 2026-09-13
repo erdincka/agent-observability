@@ -594,6 +594,63 @@ tool-call spans, use the registry's `mcp.*` names, and stop wrapping the same ca
 Cheap to reproduce: one `ClientSession.call_tool()` against any MCP server, then count the
 resulting spans by instrumentation scope.
 
+### 11. OpenLIT SDK — `init()` fetches a pricing table from GitHub at startup, by default
+
+**Project:** [openlit/openlit](https://github.com/openlit/openlit) (Python SDK 1.45.0)
+**Status:** Found 2026-09-13 when a NetworkPolicy blocked it. Not filed.
+
+`openlit.init()` calls `fetch_pricing_info()`, which with no `pricing_json` argument
+downloads `https://raw.githubusercontent.com/openlit/openlit/main/assets/pricing.json`.
+Under a default-deny egress policy this produces, on every process start:
+
+```
+ERROR openlit.__helpers: Unexpected error occurred while fetching pricing info:
+HTTPSConnectionPool(host='raw.githubusercontent.com', port=443) ... Network is unreachable
+```
+
+The SDK then continues without cost figures, so nothing breaks. The problems are that a
+workload instrumented for a no-egress deployment makes an outbound internet call it was
+never told about, and that the documented remedy (`pricing_json=` a file path) is not
+mentioned where an operator would look for it. For the enterprises this lab models, an
+unexpected outbound connection from an agent workload is a finding in its own right.
+
+**What we did instead:** ship an empty `pricing.json` in both images and pass its path.
+This lab does not compute cost.
+
+**Contribution type:** docs, and possibly a default: bundle the table in the wheel and
+refresh opportunistically, or at least make the fetch opt-in and log at INFO when it is
+skipped.
+
+### 12. LiteLLM — a custom guardrail that raises `ValueError` yields a 500 and no guardrail span
+
+**Project:** [BerriAI/litellm](https://github.com/BerriAI/litellm) (v1.100.0)
+**Status:** Found 2026-09-13 building chapter 7. Not filed.
+
+The shipped example `proxy/guardrails/guardrail_hooks/custom_guardrail.py` raises
+`ValueError("Guardrail failed words ...")` from `async_moderation_hook`. Doing the same
+from `async_pre_call_hook` produces `HTTP 500 {"error": {"message": "...", "code": "500"}}`
+and **no** `execute_guardrail` span: the refusal reaches the caller as a server error and
+the trace records a failed request with nothing saying a policy was applied.
+
+Two things are needed, and neither is prominent in the custom-guardrail documentation:
+
+1. Raise `litellm.exceptions.GuardrailRaisedException(guardrail_name=..., message=...,
+   status_code=400, blocked_content=True)`. The status becomes 400 and
+   `blocked_content` marks a verdict rather than a failure to run.
+2. Decorate the hook with `litellm.integrations.custom_guardrail.log_guardrail_information`.
+   That is what records `StandardLoggingGuardrailInformation`, which OTel v2 turns into
+   the `execute_guardrail <name>` span with `litellm.guardrail.status=guardrail_intervened`.
+
+With both, the span appears beside the call it judged, on allowed runs as `success` too.
+The shipped example has the decorator and the wrong exception; a reader copying it gets
+half of an auditable guardrail.
+
+**What we did instead:** both, in `deploy/50-litellm/agent_obs_guardrail.py`.
+
+**Contribution type:** docs fix to the custom guardrail page and the example, and
+possibly mapping a bare `Exception` from a guardrail hook to `guardrail_failed_to_respond`
+rather than a 500.
+
 ## Watch list
 
 Carried from the project brief. These are suspected gaps to verify, not findings. Status column updated

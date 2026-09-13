@@ -11,7 +11,7 @@ import pathlib
 
 from mcp.server.mcpserver import Context
 
-from .server_base import build_server, join_caller_trace, serve
+from .server_base import build_server, guard, serve
 
 RUNBOOKS = pathlib.Path(os.getenv("RUNBOOKS_DIR", "/runbooks"))
 
@@ -25,14 +25,14 @@ def _docs() -> list[pathlib.Path]:
 @mcp.tool()
 def list_runbooks(ctx: Context) -> list[str]:
     """List available runbooks by name."""
-    join_caller_trace(ctx)
+    guard(ctx, "list_runbooks")
     return [p.stem for p in _docs()]
 
 
 @mcp.tool()
 def search_runbooks(ctx: Context, query: str, limit: int = 5) -> list[dict]:
     """Find runbooks mentioning a term. Returns name and matching lines."""
-    join_caller_trace(ctx)
+    guard(ctx, "search_runbooks")
     needle = query.lower().strip()
     if not needle:
         return []
@@ -48,7 +48,7 @@ def search_runbooks(ctx: Context, query: str, limit: int = 5) -> list[dict]:
 @mcp.tool()
 def get_runbook(ctx: Context, name: str) -> str:
     """Return the full text of one runbook."""
-    join_caller_trace(ctx)
+    guard(ctx, "get_runbook")
     # Resolve and confirm containment: `name` arrives from model output and
     # '../../etc/passwd' is exactly the shape of thing that turns up there.
     target = (RUNBOOKS / f"{name}.md").resolve()

@@ -36,10 +36,10 @@ the answer is still "no".
 
 **Phase 1, "make it observable", is done.** A complete trace spans agent → MCP tool →
 gateway → model, the layers reconcile with each other, and the images rebuild from the
-repository. **Phase 2, "make it governable", has not started**: no identity, budgets,
-authorization, redaction, routing, sampling or retention. Of the four questions, only the
-first is largely answerable today. That is the expected shape at the end of phase 1, and
-the matrix says so row by row.
+repository. **Phase 2, "make it governable", is in progress**: identity and authorization
+are built (chapters 6 and 7), with six controls each demonstrable by one make target and
+each leaving a span. Content redaction, routing, retention and the reviewer's checks are
+next. The matrix says where each question stands, row by row.
 
 The commands assume [this lab's environment](docs/lab-environment.md), a three-node k3s
 cluster with a few pre-existing pieces. A single-machine path is the next infrastructure

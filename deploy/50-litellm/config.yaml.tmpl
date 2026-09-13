@@ -2,15 +2,27 @@
 # rendered output. The template exists so .env stays the single source of truth
 # for which model each route resolves to.
 #
-# Phase 1 is passthrough ONLY. No virtual keys, no budgets, no guardrails, no
-# per-team routing. Those are phase 2 and adding them here early would blur the
-# distinction the project is built to demonstrate: the gateway enforces at the
-# boundary, the Collector processes after the fact.
+# Phase 1 was passthrough only. Phase 2 (guide chapters 6 and 7) adds what the
+# gateway enforces at the boundary: per-agent virtual keys with model
+# allow-lists and rate limits (minted by `make litellm-keys`, stored in the
+# gateway's Postgres, not here), and one guardrail. The Collector still does
+# everything that happens after the fact.
 model_list:
 {{MODEL_LIST}}
 
 litellm_settings:
   drop_params: true
+
+# One guardrail, on by default for every key, pre-call. The class lives next to
+# this file (agent_obs_guardrail.py, same ConfigMap) and refuses requests that
+# contain credential-shaped text. Its decision is a span: LiteLLM's OTel v2
+# records guardrail execution with litellm.guardrail.* attributes.
+guardrails:
+  - guardrail_name: no-secrets
+    litellm_params:
+      guardrail: agent_obs_guardrail.NoSecrets
+      mode: pre_call
+      default_on: true
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY

@@ -25,10 +25,10 @@ with a documented gap; **no** not answerable today.
 
 | Sub-question | Control / mechanism | Enforced at | Evidence in the trace | Status | Gap |
 | :- | :- | :- | :- | :- | :- |
-| Which credential made the model call | Gateway key hash | Gateway | `litellm.api_key.hash`, `litellm.metadata.user_api_key_user_id` | partial | One master key for everything. Chapter 6 |
-| Which agent, as an identity the gateway can enforce on | Virtual keys per agent | Gateway | key alias, team | no | Chapter 6 |
-| Which human or system principal | Baggage propagated to every span | Application, Collector | a principal attribute on every span | no | Chapter 6 |
-| Does identity survive the agent → tool hop | Header on tool calls, read by the server | Tool server | principal on server-side spans | no | Chapter 6 |
+| Which credential made the model call | Per-agent virtual key | Gateway | `litellm.api_key.hash`, `litellm.metadata.user_api_key_alias` | yes | |
+| Which agent, as an identity the gateway can enforce on | Virtual keys per agent, team `triage` | Gateway | key alias `agent-<name>`, `litellm.team.alias` | yes | Gateway does not set `gen_ai.agent.name`; the alias is the join |
+| Which human or system principal | Baggage → `BaggageSpanProcessor`; OpenAI `user` → gateway end-user promotion | Application, tool servers, gateway | `enduser.id` on every workflow and tool span; `litellm.end_user.id` on gateway spans | yes | Principal is asserted by the Job, not derived from an authentication event |
+| Does identity survive the agent → tool hop | Baggage in JSON-RPC `_meta` (SEP-414) | Tool server | `enduser.id`, `gen_ai.agent.name`, `agent_obs.role` on server-side spans | yes | Baggage is an assertion; enforcement uses the bearer token |
 
 ## With what data access?
 
@@ -36,8 +36,11 @@ with a documented gap; **no** not answerable today.
 | :- | :- | :- | :- | :- | :- |
 | Which tool, which backend | Tool server spans and their outbound HTTP spans | Tool server | `tools/call <name>` → `GET` | yes | |
 | What the tool was asked for | Withheld: `gen_ai.tool.call.arguments` is content | Tool server | nothing | no | A non-content record of access is a design decision. Chapter 8 |
-| Was the tool permitted for this agent | Per-role allow-list | Tool server | a deny decision on the span | no | Chapter 7 |
-| Could the agent reach anything else | NetworkPolicy | Cluster | a connection that never completes | no | Chapter 7 |
+| Was the tool permitted for this agent | Role→tool policy on a bearer token | Tool server | `authz.decision`, `authz.role`, `authz.tool` on every tool span; status ERROR on deny | yes | Static policy and tokens; local attribute names |
+| Was the model permitted for this key | Model allow-list on the virtual key | Gateway | HTTP 403 on the gateway span; `triage.denied_by=gateway:model_access` on the agent span | yes | |
+| Was the call within quota | rpm limit on the virtual key | Gateway | 429 spans with `error.type=ProxyException`; run duration | yes | Which key hit the limit is in the log, not on the 429 span |
+| Was the content permitted to reach a model | Pre-call guardrail | Gateway | `execute_guardrail <name>` span with `litellm.guardrail.status` | yes | Only with `GuardrailRaisedException` and the logging decorator; otherwise a 500 and no span |
+| Could the agent reach anything else | NetworkPolicy, default-deny egress on governed pods | Cluster | a connection that never completes; `make demo-egress-denied` | yes | First ~2 s of a pod unprotected on k3s; no span for a blocked connection |
 | Was content stored anywhere | `no_content` at the gateway, `capture_message_content=False` in SDKs | Gateway, SDKs | probes grep stored values for prompt text | yes | Enforced by configuration, not by the pipeline. Chapter 8 moves it to the Collector |
 
 ## Can you prove it later?
@@ -53,8 +56,8 @@ with a documented gap; **no** not answerable today.
 
 ## Reading the matrix
 
-Nine "yes" rows, and all of them are on the first question. The three questions a data
-protection officer actually asks are the ones phase 1 could not answer. That is the
-expected shape at the end of "make it observable", and it is why the next chapters are
-identity, authorization and content, in that order: each one turns a "no" in this table
-into evidence on a span.
+At the end of phase 1 every "yes" was on the first question. After chapters 6 and 7 the
+second question is answered on every span and the third has enforcement with evidence for
+tools, models, quota, content and network. What remains "no" is on the fourth question:
+what a tool was asked for (chapter 8), and whether the record has been altered or will
+still exist in seven years (chapters 8 and 9).

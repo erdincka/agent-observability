@@ -1224,6 +1224,20 @@ wheels = [
 ]
 
 [[package]]
+name = "opentelemetry-processor-baggage"
+version = "0.65b0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-sdk" },
+    { name = "wrapt" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/10/b3/870c377673c44dcf716e78006ec8bbdb5e14ca9b1c2290bb6711534a3828/opentelemetry_processor_baggage-0.65b0.tar.gz", hash = "sha256:a1007c778e2737e28bae4b1e8b5d135907d03182ad40dfc1558416548209e491", size = 8834, upload-time = "2026-07-16T15:26:26.084Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f9/0c/6bd5aa64157053acb5c0c908a79e09ece449371b6d70d28eb45753d1e49d/opentelemetry_processor_baggage-0.65b0-py3-none-any.whl", hash = "sha256:eef686d03220c6969f56c02e7763f3200392fb6af4b797732e3e80bbd024ba66", size = 9485, upload-time = "2026-07-16T15:25:43.851Z" },
+]
+
+[[package]]
 name = "opentelemetry-proto"
 version = "1.44.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2254,6 +2268,7 @@ dependencies = [
     { name = "langgraph-checkpoint-postgres" },
     { name = "mcp" },
     { name = "openlit" },
+    { name = "opentelemetry-processor-baggage" },
     { name = "psycopg", extra = ["binary", "pool"] },
 ]
 
@@ -2265,6 +2280,7 @@ requires-dist = [
     { name = "langgraph-checkpoint-postgres", specifier = ">=2.0" },
     { name = "mcp", specifier = ">=2.0" },
     { name = "openlit", specifier = ">=1.34" },
+    { name = "opentelemetry-processor-baggage", specifier = ">=0.65b0" },
     { name = "psycopg", extras = ["binary", "pool"], specifier = ">=3.2" },
 ]
 

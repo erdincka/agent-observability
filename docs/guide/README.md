@@ -11,10 +11,10 @@ the unbuilt ones are honest plans with their decisions listed.
 | 1 | [One span, end to end](01-one-span.md) | can you prove it | built |
 | 2 | [The gateway as a control point](02-the-gateway.md) | what did it do, on whose behalf | built |
 | 3 | [The agent trace](03-the-agent-trace.md) | what did it do | built |
-| 4 | [Tools over MCP](04-tools-over-mcp.md) | what did it do, with what data access | built, one fix pending |
-| 5 | [Attribution per agent](05-attribution.md) | what did it do, by how much | built, names to align |
-| 6 | [Identity](06-identity.md) | on whose behalf | not built |
-| 7 | [Authorization](07-authorization.md) | with what data access | not built |
+| 4 | [Tools over MCP](04-tools-over-mcp.md) | what did it do, with what data access | built |
+| 5 | [Attribution per agent](05-attribution.md) | what did it do, by how much | built |
+| 6 | [Identity](06-identity.md) | on whose behalf | built |
+| 7 | [Authorization](07-authorization.md) | with what data access | built |
 | 8 | [Content, redaction and retention](08-content-and-retention.md) | with what data access, can you prove it | not built |
 | 9 | [Proving it later](09-proving-it.md) | can you prove it | not built |
 | 10 | [Dashboards as code](10-dashboards.md) | all four | not built |

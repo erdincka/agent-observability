@@ -72,6 +72,15 @@ spec:
             #   no_content | span_only | event_only | span_and_event
             - { name: OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT, value: "no_content" }
 
+            # --- identity onto every span (chapter 6) -----------------------
+            # OTel v2 promotes a bounded set of request-identity values via
+            # baggage onto every span of a request. The end-user id is
+            # promotable but off by default because it identifies a person;
+            # this lab turns it on deliberately, because "on whose behalf" is
+            # one of its four questions. The key alias is the agent's name.
+            - { name: LITELLM_OTEL_BAGGAGE_PROMOTED_KEYS, value: "litellm.team.id,litellm.team.alias,litellm.api_key.hash,litellm.end_user.id,gen_ai.request.model,litellm.provider.model" }
+            - { name: LITELLM_OTEL_BAGGAGE_METADATA_KEYS, value: "user_api_key_alias,user_api_key_end_user_id,user_api_key_user_id" }
+
             # --- state ------------------------------------------------------
             # LiteLLM is stateless for routing and stateful for identity. The
             # admin UI authenticates against a users table, so without this the

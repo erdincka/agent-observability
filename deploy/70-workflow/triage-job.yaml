@@ -12,6 +12,8 @@ metadata:
 spec:
   backoffLimit: 0
   template:
+    metadata:
+      labels: { app.kubernetes.io/name: workflow, agent-obs.io/governed: "true" }
     spec:
       restartPolicy: Never
       containers:
@@ -37,14 +39,35 @@ spec:
             # The tag is immutable, so this names exactly one image.
             - { name: WORKFLOW_IMAGE, value: "agent-obs/workflow:__WORKFLOW_TAG__" }
 
+            # Fallback only. With `make litellm-keys` applied, every agent
+            # presents its own key (AGENT_KEY_<agent>, from Secret agent-keys)
+            # and this master key is never sent.
             - name: GATEWAY_API_KEY
               valueFrom: { secretKeyRef: { name: gateway-auth, key: GATEWAY_API_KEY } }
+
+            # --- identity (chapters 6 and 7) --------------------------------
+            # On whose behalf: goes into baggage (every span) and the OpenAI
+            # `user` field (the gateway's end-user id).
+            - { name: PRINCIPAL, value: "__PRINCIPAL__" }
+            # Which role the workflow acts in at the tool servers, and the
+            # bearer token that proves it. `reader` cannot restart anything.
+            - { name: AGENT_ROLE, value: "__AGENT_ROLE__" }
+            - name: TOOL_TOKEN
+              valueFrom: { secretKeyRef: { name: agent-tool-tokens, key: TOOL_TOKEN___AGENT_ROLE_UPPER__ } }
+            # `per-agent`, or the name of a demo key (restricted, throttled)
+            # that every agent then uses.
+            - { name: KEY_PROFILE, value: "__KEY_PROFILE__" }
 
             # Drives the LangGraph checkpointer. CNPG publishes `uri` as a
             # ready-made connection string, so the workflow and the database
             # agree on the credential by construction.
             - name: POSTGRES_DSN
               valueFrom: { secretKeyRef: { name: workflow-db-app, key: uri } }
+          envFrom:
+            # AGENT_KEY_retriever, AGENT_KEY_analyser, ... — optional: absent
+            # until `make litellm-keys` has run, and the workflow says so.
+            - secretRef: { name: agent-keys, optional: true }
+              prefix: AGENT_KEY_
           resources:
             requests: { cpu: 100m, memory: 256Mi }
             limits:   { cpu: "1",  memory: 1Gi }

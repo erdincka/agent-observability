@@ -116,7 +116,10 @@ class ToolBelt:
         return text
 
 
-DOMAINS = ("metrics", "changes", "runbooks")
+# The fourth server exists for chapter 7: its one state-changing tool is what
+# the per-role policy has to deny. It is an evidence domain too — a reader can
+# list deployments — so the retriever connects to it like the other three.
+DOMAINS = ("metrics", "changes", "runbooks", "ops")
 
 
 def default_servers() -> dict[str, str]:

@@ -4,6 +4,10 @@
     python -m workflow                          the default incident
     python -m workflow --incident restart-loop  a named incident from the corpus
     python -m workflow --list                   what the corpus holds
+    python -m workflow --call restart_deployment name=mcp-runbooks
+                                                one tool call as the configured
+                                                role, no model involved — the
+                                                deterministic authorization probe
 
 Async throughout: the triage graph's retriever node talks to MCP over HTTP, and
 a coroutine node under LangGraph's synchronous `.invoke()` raises
@@ -60,7 +64,35 @@ async def _checkpointer() -> AsyncIterator[Any]:
         yield saver
 
 
+async def _call_tool(spec: list[str]) -> int:
+    """Call one tool directly, as the configured agent role. No model.
+
+    The authorization demo needs a *deterministic* tool call: whether the
+    model chooses to call `restart_deployment` on a given run is its decision,
+    and a lab that waits for it would demonstrate nothing on a run where it
+    does not. This makes the call, prints the result, and leaves the evidence
+    on the tool server's span: `authz.decision`, `authz.role`, the agent, the
+    principal.
+    """
+    from .mcp_client import tool_belt
+    from . import identity
+
+    name, *kv = spec
+    args = dict(item.split("=", 1) for item in kv)
+    tracer = trace.get_tracer("workflow.triage")
+    with identity.acting_as("probe"), tracer.start_as_current_span(
+        "triage.tool_call", attributes={"triage.tool": name, "agent_obs.role": identity.AGENT_ROLE}
+    ):
+        async with tool_belt(headers=identity.tool_headers()) as belt:
+            result = await belt.call(name, args)
+    print(f"role={identity.AGENT_ROLE} principal={identity.PRINCIPAL} tool={name} args={args}")
+    print(result)
+    return 0
+
+
 async def _run(args: argparse.Namespace) -> int:
+    if args.call:
+        return await _call_tool(args.call)
     if args.probe:
         result = await build_probe_graph().ainvoke(
             {"question": "Reply with the single word: pong", "answer": ""}
@@ -131,6 +163,10 @@ def main() -> int:
     )
     parser.add_argument(
         "--list", action="store_true", help="list the incident corpus and exit"
+    )
+    parser.add_argument(
+        "--call", nargs="+", metavar="TOOL [k=v...]",
+        help="call one tool directly as the configured role, no model",
     )
     args = parser.parse_args()
 

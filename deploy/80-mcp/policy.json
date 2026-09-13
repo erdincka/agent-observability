@@ -1,0 +1,18 @@
+{
+  "_comment": "role -> tools it may call; '*' means all. A role absent here can call nothing. Published as ConfigMap tool-policy by `make mcp`.",
+  "reader": [
+    "instant_query",
+    "list_metric_names",
+    "active_alerts",
+    "recent_commits",
+    "commit_detail",
+    "files_changed_since",
+    "list_runbooks",
+    "search_runbooks",
+    "get_runbook",
+    "list_deployments"
+  ],
+  "operator": [
+    "*"
+  ]
+}

@@ -2,7 +2,7 @@
 
 **Question it answers:** which tools did the agent call, and does the trace survive the
 hop from agent to tool? With content off, what does the trace retain about data access?
-**Status:** built, with one honesty fix in progress (TODO item 1).
+**Status:** built.
 **Tools:** MCP Python SDK over streamable HTTP, OpenLIT, Prometheus.
 
 ## Run
@@ -64,12 +64,12 @@ client, where the fault was, not on the server, where the instinct pointed.
   the server. CONTRIBUTIONS item 10.
 - Two vocabularies on one hop: the SDK uses the GenAI registry's `mcp.*` names, OpenLIT
   uses its own.
-- **`tool_belt` aborts the run when one server is unreachable**, the opposite of what its
-  docstring promises. Reproduced on 2026-09-13: the SDK's connect runs in a task group,
-  the failure reaches the caller as a cancellation that `except Exception` cannot see,
-  and the shared exit stack tears down the healthy sessions on the way out. One dead tool
-  server should degrade the evidence, not end the run. This matters for chapter 7, where
-  a denied tool must look like a degraded run, not a crashed one. TODO item 1.
+- Until 2026-09-13, `tool_belt` aborted the run when one server was unreachable, the
+  opposite of what its docstring promised: the SDK's connect runs in a task group, the
+  failure reached the caller as a cancellation that `except Exception` cannot see, and
+  the shared exit stack tore down the healthy sessions. Fixed with one exit scope per
+  server; `make mcp-degrade-test` covers a dead name and a black hole. Chapter 7 depends
+  on it: a denied tool must look like a degraded run, not a crashed one.
 - The tool servers now warn when a call arrives without trace context, the useful inverse
   of the warning the propagation stubs used to emit. A root span with no parent on a tool
   server is the durable evidence that the trail broke.

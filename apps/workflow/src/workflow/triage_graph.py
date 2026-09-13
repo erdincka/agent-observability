@@ -66,10 +66,12 @@ from langchain_core.messages import (
     SystemMessage,
     ToolMessage,
 )
+import openai
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
 from opentelemetry import trace
 
+from . import identity
 from .mcp_client import tool_belt
 from .settings import settings
 
@@ -125,6 +127,10 @@ class _Usage:
     # the worst failures carried no outcome at all — the no-tools early exit
     # stamped nothing, and the round-cap exit stamped `ok`.
     degraded: str = ""
+    # Set when the gateway refused a model call on policy grounds: a rate
+    # limit, a model the key may not use, or a guardrail. Not an infrastructure
+    # failure — the gateway answered, and the answer was no.
+    denied: str = ""
 
     def add(self, reply: BaseMessage) -> None:
         self.calls += 1
@@ -154,6 +160,7 @@ class _Usage:
         `finish_reason: "stop"` — an empty report that every finish-reason-based
         check would score as a clean success.
 
+            denied     the gateway refused a model call on policy grounds
             truncated  a reply hit the token cap; its text is partial reasoning
             empty      a reply ended normally with no text and no tool call
             degraded   the node finished, but on less than it should have had:
@@ -166,6 +173,8 @@ class _Usage:
         needs: a tool the agent was not allowed to use must look like this,
         not like a crash.
         """
+        if self.denied:
+            return "denied"
         if "length" in self.finish_reasons:
             return "truncated"
         if self.empty_outputs:
@@ -173,6 +182,30 @@ class _Usage:
         if self.degraded:
             return "degraded"
         return "ok"
+
+    def refuse(self, exc: openai.APIStatusError) -> str:
+        """Classify a gateway refusal and record it. Returns the marker text.
+
+        LiteLLM answers policy decisions with HTTP status codes: 429 for a key
+        over its rate limit or budget, 401/403 for a key that may not use the
+        requested model, 400 for a guardrail that rejected the content. The
+        body names the reason; a short classification goes on the span and the
+        full message goes to the log, never onto the span, because guardrail
+        messages can quote the content they rejected.
+        """
+        body = str(getattr(exc, "message", "") or exc)
+        low = body.lower()
+        if exc.status_code == 429:
+            kind = "rate_limit"
+        elif "guardrail" in low:
+            kind = "guardrail"
+        elif exc.status_code in (401, 403) or "not allowed" in low or "access" in low:
+            kind = "model_access"
+        else:
+            kind = f"http_{exc.status_code}"
+        self.denied = f"gateway:{kind}"
+        log.warning("gateway refused the call (%s): %s", self.denied, body[:300])
+        return f"[DENIED by the gateway: {kind} — no model output]"
 
     def stamp(self, span: trace.Span, node: str) -> None:
         """Write the totals onto the span passed in — never onto the ambient one.
@@ -234,6 +267,8 @@ class _Usage:
         span.set_attribute("triage.empty_outputs", self.empty_outputs)
         if self.degraded:
             span.set_attribute("triage.degraded_reason", self.degraded)
+        if self.denied:
+            span.set_attribute("triage.denied_by", self.denied)
         span.set_attribute("triage.outcome", self.outcome)
         if self.outcome != "ok":
             log.warning(
@@ -245,23 +280,30 @@ class _Usage:
             )
 
 
-def _model(max_tokens: int) -> ChatOpenAI:
-    """A client pointed at the gateway, never at a provider.
+def _model(max_tokens: int, agent: str) -> ChatOpenAI:
+    """A client pointed at the gateway, never at a provider, as one agent.
 
     `model` is a LiteLLM *route* name; which model serves it is the gateway's
     decision. `max_tokens` is per role on purpose — the probe graph's 64 was
     sized for the word "pong" and truncates a report mid-sentence — and the
     budgets live in settings because a reasoning route needs several times what
     a 3B route does. See `Settings.analyser_max_tokens`.
+
+    `api_key` is the agent's own virtual key, so the gateway knows which agent
+    is calling without being told. `user` is the principal, which the gateway
+    records as the end-user id. `max_retries=1`: a 429 is a policy answer and
+    the run should record it, not spend a minute retrying past it.
     """
     return ChatOpenAI(
         base_url=settings.gateway_base_url,
-        api_key=settings.gateway_api_key,
+        api_key=identity.gateway_key(agent),
         model=settings.model_route,
         temperature=settings.temperature,
         seed=settings.seed,
         max_tokens=max_tokens,
+        max_retries=1,
         timeout=300,  # CPU inference in a GPU-less lab
+        model_kwargs={"user": identity.PRINCIPAL},
     )
 
 
@@ -403,13 +445,15 @@ async def _retriever(state: TriageState) -> dict[str, Any]:
     whose `tool_calls` nobody runs; evidence stays empty and the trace shows a
     model call that decided to do something and then did not.
     """
-    with _tracer.start_as_current_span("triage.agent retriever") as span:
+    with identity.acting_as("retriever"), _tracer.start_as_current_span(
+        "triage.agent retriever"
+    ) as span:
         return await _retrieve(state, span)
 
 
 async def _retrieve(state: TriageState, span: trace.Span) -> dict[str, Any]:
     usage = _Usage()
-    async with tool_belt() as belt:
+    async with tool_belt(headers=identity.tool_headers()) as belt:
         if belt.unreachable:
             # Which servers, on the span, so a query can find runs that ran on
             # partial evidence. The names only; the error text is in the logs.
@@ -428,7 +472,7 @@ async def _retrieve(state: TriageState, span: trace.Span) -> dict[str, Any]:
                 ]
             }
 
-        model = _model(settings.retriever_max_tokens).bind_tools(belt.specs)
+        model = _model(settings.retriever_max_tokens, "retriever").bind_tools(belt.specs)
         messages: list[BaseMessage] = [
             SystemMessage(_RETRIEVER_SYSTEM),
             HumanMessage(f"Incident to investigate:\n\n{state['incident']}"),
@@ -436,7 +480,13 @@ async def _retrieve(state: TriageState, span: trace.Span) -> dict[str, Any]:
         evidence: list[str] = []
 
         for round_no in range(1, settings.max_tool_rounds + 1):
-            reply: AIMessage = await model.ainvoke(messages)
+            try:
+                reply: AIMessage = await model.ainvoke(messages)
+            except openai.APIStatusError as exc:
+                # The gateway said no. The evidence gathered so far stands;
+                # the run continues on it, and the span says why it stopped.
+                evidence.append(f"gateway/denied()\n{usage.refuse(exc)}")
+                break
             usage.add(reply)
             messages.append(reply)
 
@@ -470,21 +520,28 @@ async def _retrieve(state: TriageState, span: trace.Span) -> dict[str, Any]:
 
 async def _analyser(state: TriageState) -> dict[str, Any]:
     """Form a hypothesis from the evidence the retriever actually collected."""
-    with _tracer.start_as_current_span("triage.agent analyser") as span:
+    with identity.acting_as("analyser"), _tracer.start_as_current_span(
+        "triage.agent analyser"
+    ) as span:
         return await _analyse(state, span)
 
 
 async def _analyse(state: TriageState, span: trace.Span) -> dict[str, Any]:
-    reply = await _model(settings.analyser_max_tokens).ainvoke(
-        [
-            SystemMessage(_ANALYSER_SYSTEM),
-            HumanMessage(
-                f"Incident:\n{state['incident']}\n\n"
-                f"Evidence:\n{_render_evidence(state['evidence'])}"
-            ),
-        ]
-    )
     usage = _Usage()
+    try:
+        reply = await _model(settings.analyser_max_tokens, "analyser").ainvoke(
+            [
+                SystemMessage(_ANALYSER_SYSTEM),
+                HumanMessage(
+                    f"Incident:\n{state['incident']}\n\n"
+                    f"Evidence:\n{_render_evidence(state['evidence'])}"
+                ),
+            ]
+        )
+    except openai.APIStatusError as exc:
+        marker = usage.refuse(exc)
+        usage.stamp(span, "analyser")
+        return {"hypothesis": marker}
     usage.add(reply)
     usage.stamp(span, "analyser")
     return {"hypothesis": _text(reply, "analyser")}
@@ -492,22 +549,29 @@ async def _analyse(state: TriageState, span: trace.Span) -> dict[str, Any]:
 
 async def _reporter(state: TriageState) -> dict[str, Any]:
     """Write the summary from the hypothesis, with the evidence for citations."""
-    with _tracer.start_as_current_span("triage.agent reporter") as span:
+    with identity.acting_as("reporter"), _tracer.start_as_current_span(
+        "triage.agent reporter"
+    ) as span:
         return await _report(state, span)
 
 
 async def _report(state: TriageState, span: trace.Span) -> dict[str, Any]:
-    reply = await _model(settings.reporter_max_tokens).ainvoke(
-        [
-            SystemMessage(_REPORTER_SYSTEM),
-            HumanMessage(
-                f"Incident:\n{state['incident']}\n\n"
-                f"Hypothesis:\n{state['hypothesis'] or '(the analyser produced none)'}\n\n"
-                f"Evidence index:\n{_render_evidence_index(state['evidence'])}"
-            ),
-        ]
-    )
     usage = _Usage()
+    try:
+        reply = await _model(settings.reporter_max_tokens, "reporter").ainvoke(
+            [
+                SystemMessage(_REPORTER_SYSTEM),
+                HumanMessage(
+                    f"Incident:\n{state['incident']}\n\n"
+                    f"Hypothesis:\n{state['hypothesis'] or '(the analyser produced none)'}\n\n"
+                    f"Evidence index:\n{_render_evidence_index(state['evidence'])}"
+                ),
+            ]
+        )
+    except openai.APIStatusError as exc:
+        marker = usage.refuse(exc)
+        usage.stamp(span, "reporter")
+        return {"report": marker}
     usage.add(reply)
     usage.stamp(span, "reporter")
     return {"report": _text(reply, "reporter")}

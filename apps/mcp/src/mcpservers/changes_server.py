@@ -10,7 +10,7 @@ import subprocess
 
 from mcp.server.mcpserver import Context
 
-from .server_base import build_server, join_caller_trace, serve
+from .server_base import build_server, guard, serve
 
 REPO = os.getenv("GIT_REPO_PATH", "/repo")
 
@@ -36,7 +36,7 @@ def _git(*args: str) -> str:
 @mcp.tool()
 def recent_commits(ctx: Context, limit: int = 10) -> list[dict]:
     """List recent commits, most recent first."""
-    join_caller_trace(ctx)
+    guard(ctx, "recent_commits")
     limit = max(1, min(limit, 100))
     out = _git("log", f"-{limit}", "--pretty=format:%H%x1f%an%x1f%ar%x1f%s")
     commits = []
@@ -52,7 +52,7 @@ def recent_commits(ctx: Context, limit: int = 10) -> list[dict]:
 @mcp.tool()
 def commit_detail(ctx: Context, sha: str) -> str:
     """Show the message and changed-file stat for one commit."""
-    join_caller_trace(ctx)
+    guard(ctx, "commit_detail")
     if not sha.replace("-", "").isalnum():
         return "invalid revision"
     return _git("show", "--stat", "--pretty=medium", sha)
@@ -61,7 +61,7 @@ def commit_detail(ctx: Context, sha: str) -> str:
 @mcp.tool()
 def files_changed_since(ctx: Context, rev: str = "HEAD~5") -> list[str]:
     """List files changed since a revision — the 'what moved' question."""
-    join_caller_trace(ctx)
+    guard(ctx, "files_changed_since")
     if not rev.replace("~", "").replace("^", "").replace("-", "").isalnum():
         return ["invalid revision"]
     out = _git("diff", "--name-only", f"{rev}..HEAD")

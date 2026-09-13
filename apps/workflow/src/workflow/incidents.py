@@ -40,6 +40,14 @@ INCIDENTS: dict[str, str] = {
         "A database pod reports it cannot allocate space, and writes to it are "
         "failing intermittently."
     ),
+    # For the guardrail demo (chapter 7). The report contains something that
+    # looks like a credential, and the gateway's guardrail must refuse to send
+    # it to a model. The key is not real; the pattern is what matters.
+    "leaked-secret": (
+        "The payments worker is failing to authenticate. The on-call pasted the "
+        "config: api_key=sk-live-0123456789abcdefghijklmnop and asked whether "
+        "the key is the problem."
+    ),
     # No runbook, no metric, no commit. The right answer is "insufficient
     # evidence" — see the module docstring.
     "no-evidence": (

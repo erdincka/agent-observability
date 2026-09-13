@@ -1,0 +1,108 @@
+# Chapter 7: the boundary, enforced by the cluster rather than by convention.
+#
+# Scope: pods labelled agent-obs.io/governed=true in agent-obs-app — the
+# workflow Jobs and the four tool servers. CNPG's database pods are not
+# selected; the operator manages their traffic and they are not the subject.
+#
+# Default: a governed pod may send nothing. Then, per workload, exactly the
+# egress it needs. The demo (`make demo-egress-denied`) is a governed pod
+# trying to reach Ollama directly, around the gateway: the connection never
+# completes. That is the control point being a control point.
+#
+# k3s enforces NetworkPolicy with its embedded controller unless started with
+# --disable-network-policy; this lab's nodes were not.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: governed-default-deny-egress
+  namespace: agent-obs-app
+spec:
+  podSelector:
+    matchLabels: { agent-obs.io/governed: "true" }
+  policyTypes: [Egress]
+  egress:
+    # DNS, always.
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    # Telemetry to the Collector, always.
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: agent-obs-platform } }
+          podSelector: { matchLabels: { app.kubernetes.io/name: opentelemetry-collector } }
+      ports:
+        - { protocol: TCP, port: 4318 }
+---
+# The workflow: the gateway, the four tool servers, its own database.
+# Not Ollama. Not the internet. Not the other namespace's anything else.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: workflow-egress
+  namespace: agent-obs-app
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: workflow }
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: agent-obs-platform } }
+          podSelector: { matchLabels: { app.kubernetes.io/name: litellm } }
+      ports: [{ protocol: TCP, port: 4000 }]
+    - to:
+        - podSelector: { matchExpressions: [{ key: app.kubernetes.io/name, operator: In, values: [mcp-metrics, mcp-changes, mcp-runbooks, mcp-ops] }] }
+      ports: [{ protocol: TCP, port: 8080 }]
+    - to:
+        - podSelector: { matchLabels: { cnpg.io/cluster: workflow-db } }
+      ports: [{ protocol: TCP, port: 5432 }]
+---
+# mcp-metrics: Prometheus in the observability namespace, nothing else.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mcp-metrics-egress
+  namespace: agent-obs-app
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: mcp-metrics }
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: observability } }
+      ports: [{ protocol: TCP, port: 9090 }]
+---
+# mcp-ops: the Kubernetes API, which k3s serves on the control-plane node.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mcp-ops-egress
+  namespace: agent-obs-app
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: mcp-ops }
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - ipBlock: { cidr: 10.43.0.1/32 }
+      ports: [{ protocol: TCP, port: 443 }]
+    - to:
+        - ipBlock: { cidr: 10.1.1.30/32 }
+      ports: [{ protocol: TCP, port: 6443 }]
+---
+# Tool servers accept calls from the workflow only. A pod without the
+# workflow label — including a debugging shell — gets nothing.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mcp-ingress-from-workflow
+  namespace: agent-obs-app
+spec:
+  podSelector:
+    matchExpressions: [{ key: app.kubernetes.io/name, operator: In, values: [mcp-metrics, mcp-changes, mcp-runbooks, mcp-ops] }]
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: { matchLabels: { app.kubernetes.io/name: workflow } }
+      ports: [{ protocol: TCP, port: 8080 }]

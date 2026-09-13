@@ -9,6 +9,10 @@ PLATFORM_NS := agent-obs-platform
 # Defaults for `make workflow-triage`; override on the command line.
 INCIDENT    ?= checkout-latency
 ROUTE       ?= local
+# Identity (chapters 6 and 7): on whose behalf, in which role, on which key.
+PRINCIPAL   ?= oncall-engineer
+AGENT_ROLE  ?= reader
+KEY_PROFILE ?= per-agent
 APP_NS      := agent-obs-app
 COLLECTOR_CHART_VERSION := 0.172.1
 OPENLIT_CHART_VERSION   := 1.24.0
@@ -103,6 +107,12 @@ secrets: env-check ## Render .env into Kubernetes Secrets (never committed)
 		--namespace $(APP_NS) \
 		--from-literal=GATEWAY_API_KEY="$$LITELLM_MASTER_KEY" \
 		--dry-run=client -o yaml | kubectl apply -f -
+	@set -a; . ./.env; set +a; \
+	kubectl create secret generic agent-tool-tokens \
+		--namespace $(APP_NS) \
+		--from-literal=TOOL_TOKEN_READER="$$TOOL_TOKEN_READER" \
+		--from-literal=TOOL_TOKEN_OPERATOR="$$TOOL_TOKEN_OPERATOR" \
+		--dry-run=client -o yaml | kubectl apply -f -
 
 .PHONY: clickhouse
 clickhouse: ## Deploy ClickHouse (hot store)
@@ -184,11 +194,24 @@ litellm: env-check secrets litellm-db ## Render config and deploy the LiteLLM ga
 	kubectl create configmap litellm-config \
 		--namespace $(PLATFORM_NS) \
 		--from-file=config.yaml=deploy/50-litellm/config.rendered.yaml \
+		--from-file=agent_obs_guardrail.py=deploy/50-litellm/agent_obs_guardrail.py \
 		--dry-run=client -o yaml | kubectl apply -f -
 	@sum=$$(./scripts/litellm-checksum.sh); \
 	sed "s/REPLACED_AT_DEPLOY/$$sum/" deploy/50-litellm/litellm.yaml | kubectl apply -f -
 	kubectl apply -f deploy/50-litellm/httproute.yaml
 	kubectl rollout status deployment/litellm -n $(PLATFORM_NS) --timeout=300s
+
+.PHONY: litellm-keys
+# Runs inside the gateway pod: no route from the workstation is needed and the
+# master key never leaves the pod's environment. Idempotent. The keys are
+# deterministic from the master key, so re-running renders the same Secret.
+litellm-keys: ## Mint the per-agent virtual keys and publish them as Secret agent-keys (chapter 6)
+	@kubectl exec -i -n $(PLATFORM_NS) deploy/litellm -- python - < scripts/litellm-keys.py > /tmp/agent-keys.json
+	@python3 -c 'import json,sys; d=json.load(open("/tmp/agent-keys.json")); print("\n".join(f"--from-literal={k}={v}" for k,v in d.items()))' \
+		| xargs kubectl create secret generic agent-keys --namespace $(APP_NS) --dry-run=client -o yaml \
+		| kubectl apply -f -
+	@rm -f /tmp/agent-keys.json
+	@echo "agent-keys published: $$(kubectl get secret agent-keys -n $(APP_NS) -o jsonpath='{.data}' | python3 -c 'import json,sys; print(sorted(json.load(sys.stdin)))')"
 
 .PHONY: litellm-logs
 litellm-logs: ## Tail the LiteLLM gateway
@@ -222,10 +245,27 @@ workflow-triage: ## Run the triage workflow (INCIDENT=, ROUTE=)
 	./scripts/require-image.sh workflow
 	-kubectl delete job workflow-triage -n $(APP_NS) --ignore-not-found
 	sed -e 's|__INCIDENT__|$(INCIDENT)|' -e 's|__ROUTE__|$(ROUTE)|' \
+		-e 's|__PRINCIPAL__|$(PRINCIPAL)|' -e 's|__AGENT_ROLE_UPPER__|$(shell echo $(AGENT_ROLE) | tr a-z A-Z)|' \
+		-e 's|__AGENT_ROLE__|$(AGENT_ROLE)|' -e 's|__KEY_PROFILE__|$(KEY_PROFILE)|' \
 		-e 's|__WORKFLOW_TAG__|$(WORKFLOW_TAG)|g' -e 's|__PULL_POLICY__|$(call pull_policy,$(WORKFLOW_TAG))|g' \
 		deploy/70-workflow/triage-job.yaml | kubectl apply -f -
 	kubectl wait --for=condition=complete job/workflow-triage -n $(APP_NS) --timeout=900s
 	kubectl logs -n $(APP_NS) job/workflow-triage
+
+.PHONY: workflow-call
+# One tool call, no model: the deterministic authorization probe (chapter 7).
+#   make workflow-call TOOL=restart_deployment ARGS=name=mcp-runbooks AGENT_ROLE=reader    -> denied
+#   make workflow-call TOOL=restart_deployment ARGS=name=mcp-runbooks AGENT_ROLE=operator  -> restarted
+workflow-call: ## Call one MCP tool as AGENT_ROLE (TOOL=, ARGS=k=v)
+	@./scripts/require-image.sh workflow
+	@set -a; . ./.env; set +a; \
+	tok=$$(eval echo \$$TOOL_TOKEN_$(shell echo $(AGENT_ROLE) | tr a-z A-Z)); \
+	kubectl run workflow-call-$$$$ --namespace $(APP_NS) --rm -i --quiet --restart=Never \
+		--labels=app.kubernetes.io/name=workflow,agent-obs.io/governed=true \
+		--image=$(REGISTRY)/agent-obs/workflow:$(WORKFLOW_TAG) \
+		--image-pull-policy=$(call pull_policy,$(WORKFLOW_TAG)) \
+		--env=AGENT_ROLE=$(AGENT_ROLE) --env=TOOL_TOKEN=$$tok --env=PRINCIPAL=$(PRINCIPAL) \
+		--command -- python -m workflow --call $(TOOL) $(ARGS)
 
 .PHONY: workflow-incidents
 workflow-incidents: ## List the fixed incident corpus
@@ -240,13 +280,67 @@ mcp-image: ## Build and push the MCP servers image (context = repo root)
 	./scripts/build-image.sh mcp .
 
 .PHONY: mcp
-mcp: ## Deploy the three MCP tool servers
+mcp: secrets ## Deploy the four MCP tool servers and the role->tool policy
 	./scripts/require-image.sh mcp
+	kubectl create configmap tool-policy --namespace $(APP_NS) \
+		--from-file=policy.json=deploy/80-mcp/policy.json \
+		--dry-run=client -o yaml | kubectl apply -f -
 	sed -e 's|__MCP_TAG__|$(MCP_TAG)|g' -e 's|__PULL_POLICY__|$(call pull_policy,$(MCP_TAG))|g' \
 		deploy/80-mcp/servers.yaml | kubectl apply -f -
 	kubectl rollout status deployment/mcp-metrics  -n $(APP_NS) --timeout=300s
 	kubectl rollout status deployment/mcp-changes  -n $(APP_NS) --timeout=300s
 	kubectl rollout status deployment/mcp-runbooks -n $(APP_NS) --timeout=300s
+	kubectl rollout status deployment/mcp-ops      -n $(APP_NS) --timeout=300s
+
+.PHONY: netpol
+netpol: ## Apply the NetworkPolicies that make the gateway unbypassable (chapter 7)
+	kubectl apply -f deploy/85-netpol/policies.yaml
+
+# ------------------------------------------------------------- demos (ch 6/7) --
+# Each one is a run whose trace shows a control being applied. Read the
+# outcome on the triage.agent spans (triage.outcome, triage.denied_by) and on
+# the tool servers' spans (authz.decision).
+#
+# One at a time. The triage demos share the `workflow-triage` Job name, and a
+# second one started while the first runs deletes it — the first then reports
+# the second's logs as its own.
+
+.PHONY: demo-model-denied
+demo-model-denied: ## Every agent on a key that may only use `remote`, run on `local`: gateway refuses
+	$(MAKE) workflow-triage KEY_PROFILE=restricted ROUTE=local
+
+.PHONY: demo-rate-limited
+demo-rate-limited: ## Every agent on a 2 rpm key: the retriever is cut off mid-loop
+	$(MAKE) workflow-triage KEY_PROFILE=throttled
+
+.PHONY: demo-guardrail
+demo-guardrail: ## An incident containing a credential-shaped string: the guardrail refuses it
+	$(MAKE) workflow-triage INCIDENT=leaked-secret
+
+.PHONY: demo-tool-denied
+demo-tool-denied: ## The reader role asks mcp-ops to restart a deployment: denied on the server's span
+	$(MAKE) workflow-call TOOL=restart_deployment ARGS=name=mcp-runbooks AGENT_ROLE=reader
+
+.PHONY: demo-tool-allowed
+demo-tool-allowed: ## The operator role does the same: allowed, and mcp-runbooks restarts
+	$(MAKE) workflow-call TOOL=restart_deployment ARGS=name=mcp-runbooks AGENT_ROLE=operator
+
+.PHONY: demo-egress-denied
+# The probe sleeps before its first request. k3s's embedded network policy
+# controller (kube-router) programs a new pod's firewall chain asynchronously
+# after the pod appears, and a request in the first second or two goes through.
+# Measured on this cluster: +0s allowed, +2s and later blocked. A finding in its
+# own right (chapter 7): policy takes effect shortly after a pod starts, not
+# at the instant it starts.
+demo-egress-denied: ## A governed pod tries Ollama directly, around the gateway: blocked; via the gateway: fine
+	@kubectl run egress-probe-$$$$ --namespace $(APP_NS) --rm -i --quiet --restart=Never \
+		--labels=app.kubernetes.io/name=workflow,agent-obs.io/governed=true \
+		--image=curlimages/curl:8.10.1 -- sh -c '\
+		sleep 3; \
+		c=$$(curl -s -m 4 -o /dev/null -w "%{http_code}" http://ollama.agent-obs-platform.svc.cluster.local:11434/api/tags || true); \
+		echo "ollama direct, around the gateway: $${c:-blocked} (expected: blocked)"; \
+		c=$$(curl -s -m 4 -o /dev/null -w "%{http_code}" http://litellm.agent-obs-platform.svc.cluster.local:4000/health/liveliness || true); \
+		echo "gateway: HTTP $${c:-blocked} (expected: 200)"' 2>&1 | grep -v "^warning"
 
 .PHONY: mcp-probe
 mcp-probe: ## List the tools each MCP server exposes

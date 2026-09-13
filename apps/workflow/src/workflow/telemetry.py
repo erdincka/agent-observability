@@ -6,8 +6,11 @@ default we are choosing not to accept.
 
 import importlib
 import logging
+import pathlib
 
 import openlit
+from opentelemetry import trace
+from opentelemetry.processor.baggage import ALLOW_ALL_BAGGAGE_KEYS, BaggageSpanProcessor
 
 from .settings import settings
 
@@ -160,8 +163,27 @@ def init_telemetry() -> None:
         # Prometheus already collects them in this lab.
         collect_gpu_stats=False,
         collect_system_metrics=False,
+        # Without this, openlit.init() fetches a pricing table from
+        # raw.githubusercontent.com — an outbound internet call at startup
+        # from a workload that is not supposed to make any, and an ERROR log
+        # line under the egress policy that blocks it. An empty local table:
+        # this lab does not compute cost (LEARNINGS, 2026-09-09) and the
+        # gateway reports usage anyway. CONTRIBUTIONS item 11.
+        pricing_json=str(pathlib.Path(__file__).with_name("pricing.json")),
     )
 
     # After openlit.init, so the instrumentation that produces the noise is
     # already installed and the filter is the last word.
     logging.getLogger("opentelemetry.context").addFilter(_DetachNoiseFilter())
+
+    # Identity onto every span. `identity.acting_as` puts the principal, the
+    # agent and the role into baggage; this processor copies baggage onto each
+    # span as attributes when the span starts. ALLOW_ALL is acceptable here
+    # because this process is the only thing that writes baggage in this
+    # trace; a service receiving baggage from untrusted callers should
+    # allow-list the keys instead.
+    provider = trace.get_tracer_provider()
+    if hasattr(provider, "add_span_processor"):
+        provider.add_span_processor(BaggageSpanProcessor(ALLOW_ALL_BAGGAGE_KEYS))
+    else:  # pragma: no cover - only if openlit.init failed to install an SDK provider
+        log.warning("no SDK tracer provider — identity baggage will not reach spans")
