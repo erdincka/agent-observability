@@ -541,6 +541,59 @@ by code that knows which LangChain field to read.
 `completion_tokens_details.reasoning_tokens`, and state whether `gen_ai.usage.output_tokens` is normalised
 to include it. Capture a raw response first, so the report says which half belongs to whom.
 
+### 10. OpenLIT — MCP client operations are recorded twice, and the tool-call spans never name the tool
+
+**Project:** [openlit/openlit](https://github.com/openlit/openlit), MCP instrumentation (SDK 1.45.0)
+**Status:** Found closing phase 1, 2026-09-13, on run `355d2f646e45` (trace
+`2f68b69a870083a8fe82cde2c68369e5`). Not filed.
+
+One tool call produces four spans on the client, from two instrumentation libraries, and one
+on the server:
+
+```
+chat local                                   openlit.langchain
+└─ mcp tools/call                            openlit.mcp        20–94 ms
+   ├─ mcp tools/call                         openlit.mcp        ~1 ms
+   └─ mcp transport/request                  openlit.mcp
+      └─ MCP send tools/call active_alerts   mcp-python-sdk     client
+         └─ tools/call active_alerts         mcp-python-sdk     server, on mcp-metrics
+```
+
+Three separate problems:
+
+1. **Every client operation is recorded twice.** OpenLIT emits a nested pair per operation:
+   8 `mcp tools/call` spans for 4 tool calls, 6 `mcp tools/list` for 3 listings,
+   6 `mcp initialize` for 3 sessions. The inner span of each pair lasts about a
+   millisecond. A plausible cause, not confirmed from source, is two patched methods on one
+   call path, a public method and the one it delegates to. Counting tool calls from
+   OpenLIT's spans gives twice the true figure, the same shape as item 5.
+2. **The tool-call spans never name the tool.** They carry `mcp.method=call_tool`,
+   `mcp.operation.name`, `mcp.system`, `mcp.transport.type`, `mcp.response.size`,
+   `mcp.client.operation.duration` and `mcp.sdk.version`, but not which tool. The name only
+   appears two levels down, in the span name of the SDK's own client span, and as
+   `gen_ai.tool.name` on the server's span. Answering "which agent called which tool" means
+   walking into another library's spans, or across the network hop.
+3. **Two vocabularies on one hop.** The GenAI conventions' MCP registry defines
+   `mcp.method.name`, `mcp.protocol.version`, `mcp.session.id` and `mcp.resource.uri`, and
+   `gen_ai.tool.name` for the tool. The `mcp` SDK's spans use them. OpenLIT's use
+   `mcp.method`, `mcp.system` and `mcp.operation.name`, none of which the registry defines.
+
+The tree also shows item 7's aftermath: the tool call hangs off OpenLIT's already-ended
+`chat local` LLM span rather than the agent's span.
+
+**Why it matters here:** with content capture off, the tool's name is the only signal of data
+access the trace retains. The spec's attribute for what a tool was called with,
+`gen_ai.tool.call.arguments`, is flagged as potentially sensitive and is withheld under
+`no_content`. The instrumentation layer this lab relies on for agent-side attribution is the
+one that omits the name.
+
+**What we did instead:** nothing yet. Tool names are read from the `mcp` SDK's spans.
+
+**Contribution type:** issue against OpenLIT's MCP instrumentation: put `gen_ai.tool.name` on
+tool-call spans, use the registry's `mcp.*` names, and stop wrapping the same call twice.
+Cheap to reproduce: one `ClientSession.call_tool()` against any MCP server, then count the
+resulting spans by instrumentation scope.
+
 ## Watch list
 
 Carried from the project brief. These are suspected gaps to verify, not findings. Status column updated
@@ -549,7 +602,7 @@ Carried from the project brief. These are suspected gaps to verify, not findings
 | Project | Suspected gap | Status |
 | :- | :- | :- |
 | LangGraph | OpenTelemetry instrumentation known to be incomplete upstream | Not the gap: OpenLIT emits `invoke_workflow` and one `invoke_agent <node>` span per node with `gen_ai.agent.name`. What broke was span *export* (item 7). |
-| OpenLIT | Instrumentation coverage — which spans we still hand-roll | Better than assumed: graph nodes, MCP client and MCP server all instrumented out of the box. Hand-rolled: per-agent usage and outcome spans, and the span-leak guard (item 7). |
+| OpenLIT | Instrumentation coverage — which spans we still hand-roll | Better than assumed: OpenLIT instruments graph nodes and the MCP client, and the `mcp` SDK instruments both ends of a tool call. Gaps: MCP client spans doubled and unnamed (item 10). Hand-rolled: per-agent usage and outcome spans, and the span-leak guard (item 7). |
 | OTel GenAI semconv | Cannot express multi-agent handoff semantics | Confirmed: `semantic-conventions-genai@main` has `invoke_agent` and `gen_ai.agent.name`/`id`, and no handoff concept anywhere. How this lab represents a handoff is still open. |
 | LiteLLM | GenAI semconv coverage where it meets MCP tool calls | Moot as framed: MCP calls never pass through the gateway, which sees model calls only. Model-identity gap is item 3; reasoning tokens are item 9. |
 | ~~Perses~~ | ~~ClickHouse trace-query SDK missing~~ | **Verified — promoted to Open, item 1** |
