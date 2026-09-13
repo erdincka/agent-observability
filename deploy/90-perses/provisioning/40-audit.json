@@ -1,0 +1,173 @@
+{
+  "kind": "Dashboard",
+  "metadata": {
+    "name": "audit",
+    "project": "agent-obs"
+  },
+  "spec": {
+    "display": {
+      "name": "4. Audit: runs and traces"
+    },
+    "duration": "24h",
+    "refreshInterval": "1m",
+    "variables": [
+      {
+        "kind": "TextVariable",
+        "spec": {
+          "name": "traceId",
+          "display": {
+            "name": "Trace ID"
+          },
+          "value": ""
+        }
+      }
+    ],
+    "panels": {
+      "intro": {
+        "kind": "Panel",
+        "spec": {
+          "display": {
+            "name": "Reading this page"
+          },
+          "plugin": {
+            "kind": "Markdown",
+            "spec": {
+              "text": "Trace search and the trace view read ClickHouse directly through the `ClickHouseTraceQuery` plugin this project contributed upstream (perses/plugins#813). Click a row to open the trace below. Every span a control touched carries its decision; the run span (`triage_run`) carries who, what incident, which route and which image."
+            }
+          }
+        }
+      },
+      "runs": {
+        "kind": "Panel",
+        "spec": {
+          "display": {
+            "name": "Runs (root span triage_run)"
+          },
+          "plugin": {
+            "kind": "TraceTable",
+            "spec": {
+              "links": {
+                "trace": "/projects/agent-obs/dashboards/audit?var-traceId=${traceId}"
+              }
+            }
+          },
+          "queries": [
+            {
+              "kind": "TraceQuery",
+              "spec": {
+                "plugin": {
+                  "kind": "ClickHouseTraceQuery",
+                  "spec": {
+                    "query": "SELECT TraceId, ParentSpanId, SpanName, ServiceName, Timestamp, Duration, StatusCode FROM otel.otel_traces WHERE Timestamp BETWEEN '{start}' AND '{end}' AND TraceId IN (SELECT TraceId FROM otel.otel_traces WHERE SpanName='triage_run' AND Timestamp BETWEEN '{start}' AND '{end}')",
+                    "limit": 25
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      "flagged": {
+        "kind": "Panel",
+        "spec": {
+          "display": {
+            "name": "Flagged runs (a refusal, a non-ok outcome, or an error)"
+          },
+          "plugin": {
+            "kind": "TraceTable",
+            "spec": {
+              "links": {
+                "trace": "/projects/agent-obs/dashboards/audit?var-traceId=${traceId}"
+              }
+            }
+          },
+          "queries": [
+            {
+              "kind": "TraceQuery",
+              "spec": {
+                "plugin": {
+                  "kind": "ClickHouseTraceQuery",
+                  "spec": {
+                    "query": "SELECT TraceId, ParentSpanId, SpanName, ServiceName, Timestamp, Duration, StatusCode FROM otel.otel_traces WHERE Timestamp BETWEEN '{start}' AND '{end}' AND TraceId IN (SELECT TraceId FROM otel.otel_traces WHERE Timestamp BETWEEN '{start}' AND '{end}' AND (SpanAttributes['authz.decision']='deny' OR SpanAttributes['triage.outcome'] IN ('denied','truncated','empty','degraded') OR SpanAttributes['litellm.guardrail.status']='guardrail_intervened'))",
+                    "limit": 25
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      "trace": {
+        "kind": "Panel",
+        "spec": {
+          "display": {
+            "name": "Trace $traceId"
+          },
+          "plugin": {
+            "kind": "TracingGanttChart",
+            "spec": {}
+          },
+          "queries": [
+            {
+              "kind": "TraceQuery",
+              "spec": {
+                "plugin": {
+                  "kind": "ClickHouseTraceQuery",
+                  "spec": {
+                    "query": "$traceId",
+                    "table": "otel.otel_traces"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "layouts": [
+      {
+        "kind": "Grid",
+        "spec": {
+          "items": [
+            {
+              "x": 0,
+              "y": 0,
+              "width": 24,
+              "height": 3,
+              "content": {
+                "$ref": "#/spec/panels/intro"
+              }
+            },
+            {
+              "x": 0,
+              "y": 3,
+              "width": 12,
+              "height": 10,
+              "content": {
+                "$ref": "#/spec/panels/runs"
+              }
+            },
+            {
+              "x": 12,
+              "y": 3,
+              "width": 12,
+              "height": 10,
+              "content": {
+                "$ref": "#/spec/panels/flagged"
+              }
+            },
+            {
+              "x": 0,
+              "y": 13,
+              "width": 24,
+              "height": 14,
+              "content": {
+                "$ref": "#/spec/panels/trace"
+              }
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

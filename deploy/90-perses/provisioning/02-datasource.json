@@ -1,0 +1,36 @@
+{
+  "kind": "Datasource",
+  "metadata": {
+    "name": "clickhouse",
+    "project": "agent-obs"
+  },
+  "spec": {
+    "default": true,
+    "plugin": {
+      "kind": "ClickHouseDatasource",
+      "spec": {
+        "proxy": {
+          "kind": "HTTPProxy",
+          "spec": {
+            "url": "http://clickhouse.agent-obs-platform.svc.cluster.local:8123",
+            "allowedEndpoints": [
+              {
+                "endpointPattern": "/?",
+                "method": "POST"
+              },
+              {
+                "endpointPattern": "/",
+                "method": "GET"
+              },
+              {
+                "endpointPattern": "/ping",
+                "method": "GET"
+              }
+            ],
+            "secret": "clickhouse"
+          }
+        }
+      }
+    }
+  }
+}

@@ -47,12 +47,13 @@ with a documented gap; **no** not answerable today.
 
 | Sub-question | Control / mechanism | Enforced at | Evidence in the trace | Status | Gap |
 | :- | :- | :- | :- | :- | :- |
-| Is the trace complete | Dangling-parent query | Store | count of spans with a missing parent = 0 | yes | Manual. Chapter 9 packages it |
-| Do the layers agree | Agent sums equal gateway sums | Store | per-run reconciliation | yes | Manual |
+| Is the trace complete | `make receipt` check 1 | Store | count of spans with a missing parent = 0 | yes | Spans only; log records and metrics are not covered |
+| Do the layers agree | `make receipt` check 2 | Store | agent sums equal gateway sums | yes | Both wrong the same way would pass |
 | How long is it kept | ClickHouse tiered policy and TTL; S3 archive | Store, MinIO | parts older than a day on `s3_cold`; delete after 7 years; every batch archived as OTLP JSON | yes | The archive is not object-locked |
 | Which traces need a reviewer | Tail sampling into a restricted database | Collector | flagged traces whole in `otel_restricted`; a reader scoped to it | yes | 45 s decision window; a span arriving later than that is not re-evaluated |
-| Has it been altered | Archive with versioning, per-run digest | MinIO | versioning on; digest in chapter 9 | partial | Chapter 9 |
-| Can a reviewer reproduce the checks | Queries over standard tables | Store | | partial | Not packaged. Chapter 9 |
+| Has it been altered | Archive with versioning; per-run digest from `make receipt` | MinIO, store | versioning on; a sha256 over the stored spans, compared on the next receipt | partial | The digest lives in a local file here, not in the archive under object lock |
+| Can a reviewer reproduce the checks | `scripts/receipt.sh`, eight queries over standard tables | Store | one command per run | yes | |
+| Can the audit team see it without the author | Perses dashboards as code, read-only user | Perses | four provisioned dashboards, trace view from ClickHouse | yes | Panel vocabulary changes are code changes |
 | Can the lab itself be rebuilt | Locked dependencies, digest-pinned bases, immutable tags, `make drift` | Repository | | yes | Full rebuild onto an empty cluster not re-run |
 
 ## Reading the matrix
@@ -61,6 +62,8 @@ At the end of phase 1 every "yes" was on the first question. After chapters 6 an
 second question is answered on every span and the third has enforcement with evidence for
 tools, models, quota, content and network. After chapter 8, content cannot reach
 storage even when a component emits it, data access has a non-content record, flagged
-traces have a store of their own, and the record outlives the hot tier. What remains is
-chapter 9: packaging the reviewer's checks and a digest that shows the archived copy is
-the one written.
+traces have a store of their own, and the record outlives the hot tier. Chapter 9 packages
+the reviewer's checks into one receipt per run, and chapter 10 puts the same questions on
+four dashboards that live in the repository. The two "partial" rows that remain are
+honest limits: a digest that should live under object lock, and tool arguments that are
+content by definition.

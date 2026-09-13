@@ -1,0 +1,349 @@
+{
+  "kind": "Dashboard",
+  "metadata": {
+    "name": "governance",
+    "project": "agent-obs"
+  },
+  "spec": {
+    "display": {
+      "name": "2. On whose behalf, and was it allowed?"
+    },
+    "duration": "24h",
+    "refreshInterval": "1m",
+    "panels": {
+      "intro": {
+        "kind": "Panel",
+        "spec": {
+          "display": {
+            "name": "Reading this page"
+          },
+          "plugin": {
+            "kind": "Markdown",
+            "spec": {
+              "text": "Identity is on every span: `enduser.id` (the principal), `gen_ai.agent.name`, `agent_obs.role` from baggage, and on the gateway `litellm.metadata.user_api_key_alias` (the agent's own key), `litellm.team.alias`, `litellm.end_user.id`. Every control records its decision where it was made: `authz.decision` on tool spans, HTTP status on gateway spans, `litellm.guardrail.status` on guardrail spans, `triage.denied_by` on the agent span that was refused."
+            }
+          }
+        }
+      },
+      "principals": {
+        "kind": "Panel",
+        "spec": {
+          "display": {
+            "name": "Model calls, and distinct principals they were made for"
+          },
+          "plugin": {
+            "kind": "TimeSeriesChart",
+            "spec": {
+              "legend": {
+                "position": "bottom",
+                "mode": "list"
+              },
+              "visual": {
+                "display": "bar",
+                "stack": "all"
+              }
+            }
+          },
+          "queries": [
+            {
+              "kind": "TimeSeriesQuery",
+              "spec": {
+                "plugin": {
+                  "kind": "ClickHouseTimeSeriesQuery",
+                  "spec": {
+                    "query": "SELECT toStartOfInterval(Timestamp, INTERVAL 5 MINUTE) AS time, count() AS calls, uniq(SpanAttributes['litellm.end_user.id']) AS principals, countIf(SpanAttributes['litellm.end_user.id']='') AS calls_without_principal FROM otel.otel_traces WHERE ServiceName='litellm-gateway' AND SpanName LIKE 'chat%' AND Timestamp BETWEEN '{start}' AND '{end}' GROUP BY time ORDER BY time"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      "keys": {
+        "kind": "Panel",
+        "spec": {
+          "display": {
+            "name": "Model calls per key alias (which agent, as the gateway verified it)"
+          },
+          "plugin": {
+            "kind": "TimeSeriesChart",
+            "spec": {
+              "legend": {
+                "position": "bottom",
+                "mode": "list"
+              },
+              "visual": {
+                "display": "bar",
+                "stack": "all"
+              }
+            }
+          },
+          "queries": [
+            {
+              "kind": "TimeSeriesQuery",
+              "spec": {
+                "plugin": {
+                  "kind": "ClickHouseTimeSeriesQuery",
+                  "spec": {
+                    "query": "SELECT toStartOfInterval(Timestamp, INTERVAL 5 MINUTE) AS time, countIf(SpanAttributes['litellm.metadata.user_api_key_alias']='agent-retriever') AS retriever, countIf(SpanAttributes['litellm.metadata.user_api_key_alias']='agent-analyser') AS analyser, countIf(SpanAttributes['litellm.metadata.user_api_key_alias']='agent-reporter') AS reporter, countIf(SpanAttributes['litellm.metadata.user_api_key_alias'] IN ('agent-restricted','agent-throttled')) AS demo_keys, countIf(SpanAttributes['litellm.metadata.user_api_key_alias']='') AS master_key FROM otel.otel_traces WHERE ServiceName='litellm-gateway' AND SpanName LIKE 'chat%' AND Timestamp BETWEEN '{start}' AND '{end}' GROUP BY time ORDER BY time"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      "authz": {
+        "kind": "Panel",
+        "spec": {
+          "display": {
+            "name": "Tool authorization decisions (server-side)"
+          },
+          "plugin": {
+            "kind": "TimeSeriesChart",
+            "spec": {
+              "legend": {
+                "position": "bottom",
+                "mode": "list"
+              },
+              "visual": {
+                "display": "bar",
+                "stack": "all"
+              }
+            }
+          },
+          "queries": [
+            {
+              "kind": "TimeSeriesQuery",
+              "spec": {
+                "plugin": {
+                  "kind": "ClickHouseTimeSeriesQuery",
+                  "spec": {
+                    "query": "SELECT toStartOfInterval(Timestamp, INTERVAL 5 MINUTE) AS time, countIf(SpanAttributes['authz.decision']='allow') AS allow, countIf(SpanAttributes['authz.decision']='deny') AS deny FROM otel.otel_traces WHERE SpanAttributes['authz.decision']!='' AND Timestamp BETWEEN '{start}' AND '{end}' GROUP BY time ORDER BY time"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      "gateway_refusals": {
+        "kind": "Panel",
+        "spec": {
+          "display": {
+            "name": "Gateway refusals by kind (from the agent spans' triage.denied_by)"
+          },
+          "plugin": {
+            "kind": "TimeSeriesChart",
+            "spec": {
+              "legend": {
+                "position": "bottom",
+                "mode": "list"
+              },
+              "visual": {
+                "display": "bar",
+                "stack": "all"
+              }
+            }
+          },
+          "queries": [
+            {
+              "kind": "TimeSeriesQuery",
+              "spec": {
+                "plugin": {
+                  "kind": "ClickHouseTimeSeriesQuery",
+                  "spec": {
+                    "query": "SELECT toStartOfInterval(Timestamp, INTERVAL 5 MINUTE) AS time, countIf(SpanAttributes['triage.denied_by']='gateway:model_access') AS model_access, countIf(SpanAttributes['triage.denied_by']='gateway:rate_limit') AS rate_limit, countIf(SpanAttributes['triage.denied_by']='gateway:guardrail') AS guardrail FROM otel.otel_traces WHERE SpanAttributes['triage.denied_by']!='' AND Timestamp BETWEEN '{start}' AND '{end}' GROUP BY time ORDER BY time"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      "guardrail": {
+        "kind": "Panel",
+        "spec": {
+          "display": {
+            "name": "Guardrail verdicts (execute_guardrail spans)"
+          },
+          "plugin": {
+            "kind": "TimeSeriesChart",
+            "spec": {
+              "legend": {
+                "position": "bottom",
+                "mode": "list"
+              },
+              "visual": {
+                "display": "bar",
+                "stack": "all"
+              }
+            }
+          },
+          "queries": [
+            {
+              "kind": "TimeSeriesQuery",
+              "spec": {
+                "plugin": {
+                  "kind": "ClickHouseTimeSeriesQuery",
+                  "spec": {
+                    "query": "SELECT toStartOfInterval(Timestamp, INTERVAL 5 MINUTE) AS time, countIf(SpanAttributes['litellm.guardrail.status']='success') AS allowed, countIf(SpanAttributes['litellm.guardrail.status']='guardrail_intervened') AS intervened FROM otel.otel_traces WHERE SpanAttributes['litellm.guardrail.name']!='' AND Timestamp BETWEEN '{start}' AND '{end}' GROUP BY time ORDER BY time"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      "http429": {
+        "kind": "Panel",
+        "spec": {
+          "display": {
+            "name": "Gateway 429s and other server-side errors"
+          },
+          "plugin": {
+            "kind": "TimeSeriesChart",
+            "spec": {
+              "legend": {
+                "position": "bottom",
+                "mode": "list"
+              },
+              "visual": {
+                "display": "line",
+                "lineWidth": 1.5
+              }
+            }
+          },
+          "queries": [
+            {
+              "kind": "TimeSeriesQuery",
+              "spec": {
+                "plugin": {
+                  "kind": "ClickHouseTimeSeriesQuery",
+                  "spec": {
+                    "query": "SELECT toStartOfInterval(Timestamp, INTERVAL 5 MINUTE) AS time, countIf(StatusCode='Error') AS error_spans FROM otel.otel_traces WHERE ServiceName='litellm-gateway' AND SpanKind='Server' AND Timestamp BETWEEN '{start}' AND '{end}' GROUP BY time ORDER BY time"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      "access": {
+        "kind": "Panel",
+        "spec": {
+          "display": {
+            "name": "Data access by resource (agent_obs.access.resource on tool spans)"
+          },
+          "plugin": {
+            "kind": "TimeSeriesChart",
+            "spec": {
+              "legend": {
+                "position": "bottom",
+                "mode": "list"
+              },
+              "visual": {
+                "display": "bar",
+                "stack": "all"
+              }
+            }
+          },
+          "queries": [
+            {
+              "kind": "TimeSeriesQuery",
+              "spec": {
+                "plugin": {
+                  "kind": "ClickHouseTimeSeriesQuery",
+                  "spec": {
+                    "query": "SELECT toStartOfInterval(Timestamp, INTERVAL 5 MINUTE) AS time, countIf(SpanAttributes['agent_obs.access.resource'] LIKE 'prometheus:%') AS prometheus, countIf(SpanAttributes['agent_obs.access.resource'] LIKE 'git:%') AS git, countIf(SpanAttributes['agent_obs.access.resource'] LIKE 'runbook%') AS runbooks, countIf(SpanAttributes['agent_obs.access.resource'] LIKE 'k8s:%') AS kubernetes FROM otel.otel_traces WHERE SpanAttributes['agent_obs.access.resource']!='' AND Timestamp BETWEEN '{start}' AND '{end}' GROUP BY time ORDER BY time"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "layouts": [
+      {
+        "kind": "Grid",
+        "spec": {
+          "items": [
+            {
+              "x": 0,
+              "y": 0,
+              "width": 24,
+              "height": 3,
+              "content": {
+                "$ref": "#/spec/panels/intro"
+              }
+            },
+            {
+              "x": 0,
+              "y": 3,
+              "width": 12,
+              "height": 7,
+              "content": {
+                "$ref": "#/spec/panels/principals"
+              }
+            },
+            {
+              "x": 12,
+              "y": 3,
+              "width": 12,
+              "height": 7,
+              "content": {
+                "$ref": "#/spec/panels/keys"
+              }
+            },
+            {
+              "x": 0,
+              "y": 10,
+              "width": 8,
+              "height": 7,
+              "content": {
+                "$ref": "#/spec/panels/authz"
+              }
+            },
+            {
+              "x": 8,
+              "y": 10,
+              "width": 8,
+              "height": 7,
+              "content": {
+                "$ref": "#/spec/panels/gateway_refusals"
+              }
+            },
+            {
+              "x": 16,
+              "y": 10,
+              "width": 8,
+              "height": 7,
+              "content": {
+                "$ref": "#/spec/panels/guardrail"
+              }
+            },
+            {
+              "x": 0,
+              "y": 17,
+              "width": 12,
+              "height": 7,
+              "content": {
+                "$ref": "#/spec/panels/http429"
+              }
+            },
+            {
+              "x": 12,
+              "y": 17,
+              "width": 12,
+              "height": 7,
+              "content": {
+                "$ref": "#/spec/panels/access"
+              }
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

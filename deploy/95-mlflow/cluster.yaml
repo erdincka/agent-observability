@@ -1,0 +1,20 @@
+# MLflow's backend store (guide chapter 11). A third CloudNativePG cluster on
+# the platform side: evaluation records are platform state, like the gateway's
+# identity tables, and share nothing with the workload's checkpoints.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: mlflow-db
+  namespace: agent-obs-platform
+spec:
+  instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgresql:18.4-system-trixie
+  bootstrap:
+    initdb:
+      database: mlflow
+      owner: mlflow
+  storage:
+    size: 5Gi
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits:   { cpu: "1",  memory: 1Gi }

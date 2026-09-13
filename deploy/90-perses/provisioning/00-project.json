@@ -1,0 +1,11 @@
+{
+  "kind": "Project",
+  "metadata": {
+    "name": "agent-obs"
+  },
+  "spec": {
+    "display": {
+      "name": "Agent observability lab"
+    }
+  }
+}

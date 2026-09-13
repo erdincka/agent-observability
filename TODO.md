@@ -46,6 +46,28 @@ To rotate: set a new `MINIO_ROOT_PASSWORD` in `.env`, run `make minio-vm` (it re
 `/etc/default/minio` and restarts MinIO), then `make minio-verify`. The cluster's credential
 is a separate MinIO user, and `minio-verify` confirms it still works and is still scoped.
 
+## Deferred at the end of phase 3, 2026-09-13
+
+- **A single-machine path.** The guide's commands assume this lab (docs/lab-environment.md
+  marks what is lab-specific). A k3d or single-node variant with port-forwards instead of
+  the gateway, a local registry, and MinIO in-cluster would let a reader run the guide on
+  a laptop. Deliberately left: the review happens on this lab.
+- **Object lock on the archive bucket, and the receipt digest written there.** Versioning
+  stops silent overwrite; nothing stops deletion. Chapter 9 names the shape.
+- **Rate-limit refusals are not attributed on the 429 span.** Which key hit the limit is in
+  the gateway log. Possibly a LiteLLM contribution.
+- **`gen_ai.request.reasoning.level`** is still recorded nowhere; the workflow does not
+  request a level.
+- **MLflow's evaluation is regular expressions.** An LLM judge on the `remote` route would
+  be the next step, scored against the same `correct` metric. The first pass showed the
+  specific gap: irrelevant tool output counts as evidence, so
+  `confident_cause_without_evidence` cannot fire on the incident it was written for.
+- **Run the evaluation on the `remote` route** (needs the external key) and compare in
+  MLflow; the local 3B model scored 0 of 4.
+- **The Perses dashboards use 5-minute buckets fixed in SQL.** A `$step`-style variable
+  would follow the time range.
+- **The thesis paragraph in README.md** is the author's.
+
 ## Lower priority
 
 - **The analyser's 8192-token cap is unexercised.** It was raised after a truncation at

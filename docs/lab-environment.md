@@ -48,6 +48,10 @@ make step5              # MCP image, tool servers, probe
 make workflow-image
 make workflow-probe
 make workflow-triage    # INCIDENT= ROUTE=local|remote
+make litellm-keys && make netpol           # chapters 6 and 7
+make ch-restricted-user && make retention  # chapter 8
+make perses-image && make perses           # chapter 10
+make mlflow && make evaluate               # chapter 11
 ```
 
 `make help` lists every target. [deploy/README.md](../deploy/README.md) has the
@@ -55,9 +59,17 @@ deployment order and why it matters.
 
 ## Reaching the UIs
 
-Add hosts entries for `openlit.kube.local` and `litellm.kube.local` pointing at the
-Gateway, or port-forward the two Services. The LiteLLM UI logs in with
-`LITELLM_UI_USERNAME` / `LITELLM_UI_PASSWORD` from `.env`, not the master key.
+Four UIs, all through the `platform` Gateway at 10.1.1.241, all `*.kube.local`:
+
+| UI | Hostname | What it shows | Login |
+| :- | :- | :- | :- |
+| OpenLIT | `openlit.kube.local` | per-trace GenAI view (chapters 3 to 5) | its own admin |
+| LiteLLM | `litellm.kube.local` | keys, teams, spend, guardrails (chapters 6 and 7) | `LITELLM_UI_USERNAME` / `LITELLM_UI_PASSWORD` from `.env` |
+| Perses | `perses.kube.local` | the four dashboards and the trace view (chapter 10) | none |
+| MLflow | `mlflow.kube.local` | the evaluation runs (chapter 11) | none |
+
+Add hosts entries pointing at the gateway, or `kubectl port-forward` the Services
+(`openlit:3000`, `litellm:4000`, `perses:8080`, `mlflow:80`, all in `agent-obs-platform`).
 
 ## Reproducibility, as it stands
 

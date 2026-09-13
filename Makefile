@@ -25,6 +25,8 @@ REGISTRY    := 10.1.1.240:5000
 # they are read when used. See scripts/image-tag.sh and scripts/build-image.sh.
 WORKFLOW_TAG = $(shell scripts/image-tag.sh workflow)
 MCP_TAG      = $(shell scripts/image-tag.sh mcp)
+PERSES_TAG   = $(shell scripts/image-tag.sh perses)
+PERSES_CHART_VERSION := 0.23.2
 # A clean tag names exactly one image, so a cached copy is correct. A -dirty tag
 # is rebuilt in place, so it has to be pulled every time.
 pull_policy  = $(if $(findstring -dirty,$(1)),Always,IfNotPresent)
@@ -94,6 +96,11 @@ secrets: env-check ## Render .env into Kubernetes Secrets (never committed)
 		--from-literal=CLICKHOUSE_PASSWORD="$$CLICKHOUSE_PASSWORD" \
 		--from-literal=CLICKHOUSE_DB="$$CLICKHOUSE_DB" \
 		--from-literal=CLICKHOUSE_RESTRICTED_PASSWORD="$$CLICKHOUSE_RESTRICTED_PASSWORD" \
+		--dry-run=client -o yaml | kubectl apply -f -
+	@set -a; . ./.env; set +a; \
+	kubectl create secret generic perses-clickhouse \
+		--namespace $(PLATFORM_NS) \
+		--from-literal=password="$$CLICKHOUSE_PERSES_PASSWORD" \
 		--dry-run=client -o yaml | kubectl apply -f -
 	@set -a; . ./.env; set +a; \
 	kubectl create secret generic litellm-auth \
@@ -353,6 +360,85 @@ demo-restricted-access: env-check ## The restricted reader can read otel_restric
 	out=$$(kubectl exec -i -n $(PLATFORM_NS) clickhouse-0 -- clickhouse-client --user restricted_reader --password "$$CLICKHOUSE_RESTRICTED_PASSWORD" \
 		--query "SELECT count() FROM otel.otel_traces" 2>&1); \
 	case "$$out" in *ACCESS_DENIED*|*"Not enough privileges"*) echo "refused (ACCESS_DENIED) — as intended";; *) echo "UNEXPECTED: $$out"; exit 1;; esac
+
+# ------------------------------------------------------------ chapter 10 -----
+
+.PHONY: perses-image
+perses-image: ## Build Perses with the ClickHouse trace-query plugin from the upstream PR
+	./scripts/build-image.sh perses
+
+.PHONY: ch-perses-user
+ch-perses-user: env-check ## Create the read-only ClickHouse user Perses queries as
+	@set -a; . ./.env; set +a; \
+	kubectl exec -i -n $(PLATFORM_NS) clickhouse-0 -- \
+		clickhouse-client --user "$$CLICKHOUSE_USER" --password "$$CLICKHOUSE_PASSWORD" --multiquery --query \
+		"CREATE USER IF NOT EXISTS perses_reader IDENTIFIED WITH sha256_password BY '$$CLICKHOUSE_PERSES_PASSWORD'; \
+		 GRANT SELECT ON otel.* TO perses_reader; GRANT SELECT ON otel_restricted.* TO perses_reader; \
+		 GRANT SELECT ON system.parts TO perses_reader;"
+	@echo "perses_reader: SELECT on otel.*, otel_restricted.*, system.parts"
+
+.PHONY: perses-dashboards
+perses-dashboards: ## (Re)publish the provisioning files as the ConfigMap Perses reads
+	kubectl create configmap perses-provisioning --namespace $(PLATFORM_NS) \
+		--from-file=deploy/90-perses/provisioning/ \
+		--dry-run=client -o yaml | kubectl apply -f -
+
+.PHONY: perses
+perses: secrets ch-perses-user perses-dashboards ## Deploy Perses (chapter 10)
+	./scripts/require-image.sh perses
+	sed -e 's|__REGISTRY__|$(REGISTRY)|' -e 's|__PERSES_TAG__|$(PERSES_TAG)|' -e 's|__PULL_POLICY__|$(call pull_policy,$(PERSES_TAG))|' \
+		deploy/90-perses/values.yaml > /tmp/perses-values.rendered.yaml
+	helm upgrade --install perses perses/perses \
+		--version $(PERSES_CHART_VERSION) \
+		--namespace $(PLATFORM_NS) \
+		--values /tmp/perses-values.rendered.yaml \
+		--wait --timeout 5m
+	kubectl apply -f deploy/90-perses/httproute.yaml
+
+.PHONY: perses-logs
+perses-logs: ## Tail Perses
+	kubectl logs -n $(PLATFORM_NS) -l app.kubernetes.io/name=perses -f --tail=100
+
+# ------------------------------------------------------------ chapter 11 -----
+MLFLOW_CHART_VERSION := 1.11.7
+N ?= 1
+
+.PHONY: mlflow-db
+mlflow-db: ## Deploy MLflow's PostgreSQL (CloudNativePG)
+	kubectl apply -f deploy/95-mlflow/cluster.yaml
+	kubectl wait --for=condition=Ready cluster/mlflow-db -n $(PLATFORM_NS) --timeout=300s
+
+.PHONY: mlflow
+mlflow: env-check minio-secret mlflow-db ## Deploy MLflow, the evaluation loop (chapter 11)
+	@set -a; . ./.env; set +a; \
+	sed -e "s|__MINIO_ENDPOINT__|$$MINIO_ENDPOINT|" deploy/95-mlflow/values.yaml > /tmp/mlflow-values.rendered.yaml
+	@u=$$(kubectl get secret mlflow-db-app -n $(PLATFORM_NS) -o jsonpath='{.data.username}' | base64 -d); \
+	p=$$(kubectl get secret mlflow-db-app -n $(PLATFORM_NS) -o jsonpath='{.data.password}' | base64 -d); \
+	helm upgrade --install mlflow community-charts/mlflow \
+		--version $(MLFLOW_CHART_VERSION) \
+		--namespace $(PLATFORM_NS) \
+		--values /tmp/mlflow-values.rendered.yaml \
+		--set backendStore.postgres.user="$$u" --set backendStore.postgres.password="$$p" \
+		--wait --timeout 10m
+	kubectl apply -f deploy/95-mlflow/httproute.yaml
+
+.PHONY: evaluate
+evaluate: ## Run the corpus N times and score each run in MLflow: make evaluate N=1 ROUTE=local
+	./scripts/evaluate.py --n $(N) --route $(ROUTE)
+
+.PHONY: mlflow-logs
+mlflow-logs: ## Tail MLflow
+	kubectl logs -n $(PLATFORM_NS) -l app.kubernetes.io/name=mlflow -f --tail=100
+
+# ------------------------------------------------------------ chapter 9 ------
+
+.PHONY: receipt
+receipt: ## The reviewer's receipt for one run: make receipt RUN=<run id>
+	@./scripts/receipt.sh $(RUN)
+
+.PHONY: runs
+runs: ## List recent runs with outcome per agent
+	@$(MAKE) -s ch-query Q="SELECT r.run AS run, r.incident AS incident, r.route AS route, r.started AS started, arrayStringConcat(groupArray(concat(a.agent, '=', a.outcome)), ' ') AS outcomes FROM (SELECT SpanAttributes['triage.run_id'] AS run, SpanAttributes['triage.incident_id'] AS incident, SpanAttributes['triage.model_route'] AS route, toStartOfSecond(Timestamp) AS started, TraceId FROM otel_traces WHERE SpanName='triage_run') AS r LEFT JOIN (SELECT TraceId, SpanAttributes['gen_ai.agent.name'] AS agent, SpanAttributes['triage.outcome'] AS outcome FROM otel_traces WHERE SpanAttributes['gen_ai.operation.name']='invoke_agent' AND SpanAttributes['triage.outcome']!='') AS a ON r.TraceId=a.TraceId GROUP BY 1,2,3,4 ORDER BY started DESC LIMIT 20 FORMAT PrettyCompact"
 
 .PHONY: netpol
 netpol: ## Apply the NetworkPolicies that make the gateway unbypassable (chapter 7)

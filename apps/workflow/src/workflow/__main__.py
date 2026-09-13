@@ -27,6 +27,7 @@ from typing import Any, AsyncIterator
 
 from opentelemetry import trace
 
+from . import identity
 from .graph import build_probe_graph
 from .incidents import INCIDENTS, resolve
 from .settings import settings
@@ -75,7 +76,6 @@ async def _call_tool(spec: list[str]) -> int:
     principal.
     """
     from .mcp_client import tool_belt
-    from . import identity
 
     name, *kv = spec
     args = dict(item.split("=", 1) for item in kv)
@@ -110,7 +110,9 @@ async def _run(args: argparse.Namespace) -> int:
     # the only grouping key in ClickHouse is TraceId, and nothing on a span says
     # which incident or which image produced it — so "compare run 7 to run 12"
     # is archaeology. These four attributes make it a query.
-    with tracer.start_as_current_span(
+    # The principal and role in baggage for the whole run, so the run span and
+    # every span under it carry them; each node then adds its own agent name.
+    with identity.acting_as("workflow"), tracer.start_as_current_span(
         "triage_run",
         attributes={
             "triage.run_id": run_id,

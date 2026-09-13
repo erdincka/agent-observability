@@ -1,0 +1,58 @@
+# MLflow — the evaluation loop (guide chapter 11). Observability answers "what
+# did the agent do"; this answers "was it right", per run, comparable across
+# routes and images. chart: community-charts/mlflow 1.11.7 (app 3.16.0).
+#
+# Backend store: the CNPG cluster in cluster.yaml. This chart version's schema
+# takes the credentials as literal values only, so `make mlflow` reads them
+# from the Secret the operator generates and passes them with --set; they
+# reach the Helm release, never this file. Artifact store: MinIO's workflow-artifacts
+# bucket with the cluster's scoped credential. No auth on the UI: same posture
+# as the other lab UIs, reachable only through the gateway.
+
+backendStore:
+  databaseMigration: true
+  databaseConnectionCheck: true
+  postgres:
+    enabled: true
+    host: mlflow-db-rw.agent-obs-platform.svc.cluster.local
+    port: 5432
+    database: mlflow
+    user: ""      # set by make mlflow from Secret mlflow-db-app
+    password: ""  # set by make mlflow from Secret mlflow-db-app
+
+artifactRoot:
+  proxiedArtifactStorage: true
+  s3:
+    enabled: true
+    bucket: workflow-artifacts
+    path: mlflow
+    existingSecret:
+      name: minio-auth
+      keyOfAccessKeyId: AWS_ACCESS_KEY_ID
+      keyOfSecretAccessKey: AWS_SECRET_ACCESS_KEY
+
+extraEnvVars:
+  MLFLOW_S3_ENDPOINT_URL: "__MINIO_ENDPOINT__"
+  AWS_DEFAULT_REGION: us-east-1
+  MLFLOW_S3_IGNORE_TLS: "true"
+
+# MLflow 3 rejects requests whose Host header it was not told about (a
+# DNS-rebinding guard). With an explicit list, the kubelet's liveness and
+# readiness probes — which present the pod IP as the Host — were rejected
+# and the pod restart-looped. The guard is off: the only path to this
+# service is the gateway, and the pod IP is not knowable in advance.
+serverAllowedHosts:
+  - "*"
+
+service:
+  type: ClusterIP
+  port: 80
+
+# MLflow 3 starts four uvicorn workers by default and the pod was OOM-killed
+# at 2Gi before the first request. One worker is enough for a lab.
+extraArgs:
+  workers: "1"
+
+resources:
+  requests: { cpu: 100m, memory: 512Mi }
+  limits:   { cpu: "1",  memory: 3Gi }

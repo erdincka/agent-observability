@@ -15,7 +15,10 @@ see step 2 in LEARNINGS.md for what happens if you reverse 20 and 30.
 | `50-litellm/` | LiteLLM gateway — every model call goes through it | `make litellm` |
 | `60-postgres/` | PostgreSQL for the workflow's own state (CNPG) | `make postgres` |
 | `70-workflow/` | The LangGraph workflow as one-shot Jobs: the plumbing probe, and the triage graph (templated by make — applying `triage-job.yaml` directly leaves `__INCIDENT__` unfilled) | `make workflow-probe`, `make workflow-triage INCIDENT= ROUTE=` |
-| `80-mcp/` | Three MCP tool servers over streamable HTTP | `make mcp` |
+| `80-mcp/` | Four MCP tool servers over streamable HTTP, the role→tool policy | `make mcp` |
+| `85-netpol/` | NetworkPolicies: governed pods may reach only the gateway, the tool servers, DNS, their database and the Collector | `make netpol` |
+| `90-perses/` | Perses with the ClickHouse trace-query plugin; dashboards as JSON | `make perses-image`, `make perses` |
+| `95-mlflow/` | MLflow, the evaluation loop, on CloudNativePG and MinIO | `make mlflow` |
 
 `05-minio/` is numbered before `00-namespace/` because it is not in the cluster at all —
 it is the one dependency that has to exist before Kubernetes is even relevant.

@@ -1,0 +1,79 @@
+# Perses — dashboards as code over the same ClickHouse (guide chapter 10).
+#
+# chart: perses/perses 0.23.2 (app v0.54.0). The image is this project's own
+# build: stock Perses plus the ClickHouse trace-query plugin from the upstream
+# PR (apps/perses/Dockerfile). `make perses` fills in the registry and tag.
+#
+# Everything Perses shows comes from deploy/90-perses/provisioning/, a
+# ConfigMap of JSON resources Perses loads at start and every 10 minutes:
+# the project, a Secret pointing at a mounted password file, the ClickHouse
+# datasource through Perses's own proxy, and four dashboards. Nothing is
+# created in the UI; the files are the source of truth, which is the point.
+
+image:
+  registry: __REGISTRY__
+  name: agent-obs/perses
+  version: __PERSES_TAG__
+  pullPolicy: __PULL_POLICY__
+
+replicas: 1
+logLevel: info
+
+envVars:
+  # The curated plugin directory from the image: every bundled plugin except
+  # the old ClickHouse archive, plus the PR build. Set here because the final
+  # image stage is distroless and cannot delete the bundled file.
+  - name: PERSES_PLUGIN_ARCHIVE_PATHS_0
+    value: /etc/perses/plugins-archive-lab
+
+config:
+  security:
+    readonly: false
+    enable_auth: false
+  frontend:
+    explorer:
+      enable: true
+    important_dashboards:
+      - project: agent-obs
+        dashboard: activity
+      - project: agent-obs
+        dashboard: governance
+      - project: agent-obs
+        dashboard: proof
+      - project: agent-obs
+        dashboard: audit
+  database:
+    file:
+      folder: /perses
+      extension: json
+  provisioning:
+    folders:
+      - /etc/perses/provisioning
+    interval: 10m
+
+# Dashboards created in the UI survive restarts; provisioned ones are re-read
+# from the ConfigMap and win.
+persistence:
+  enabled: true
+  size: 2Gi
+
+volumes:
+  - name: provisioning
+    configMap: { name: perses-provisioning }
+  # The ClickHouse reader's password as a file, referenced by the provisioned
+  # Perses Secret (basicAuth.passwordFile). Never in a provisioning file.
+  - name: clickhouse-password
+    secret:
+      secretName: perses-clickhouse
+      items: [{ key: password, path: clickhouse-password }]
+volumeMounts:
+  - { name: provisioning, mountPath: /etc/perses/provisioning, readOnly: true }
+  - { name: clickhouse-password, mountPath: /etc/perses/secrets, readOnly: true }
+
+service:
+  type: ClusterIP
+  port: 8080
+
+resources:
+  requests: { cpu: 100m, memory: 256Mi }
+  limits:   { cpu: "1",  memory: 1Gi }

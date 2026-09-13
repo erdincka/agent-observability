@@ -5,7 +5,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-app="${1:?usage: require-image.sh <workflow|mcp>}"
+app="${1:?usage: require-image.sh <workflow|mcp|perses>}"
 REGISTRY="${REGISTRY:-10.1.1.240:5000}"
 tag=$(scripts/image-tag.sh "$app")
 

@@ -42,6 +42,7 @@ while IFS= read -r f; do
   case "$f" in
     */values.yaml|*/config.rendered.yaml|*.tmpl) continue ;;
     deploy/70-workflow/*) continue ;;
+    deploy/80-mcp/policy.json) continue ;;
     deploy/80-mcp/servers.yaml)
       tag=$(scripts/image-tag.sh mcp)
       sed -e "s|__MCP_TAG__|$tag|g" -e "s|__PULL_POLICY__|$(pull_policy "$tag")|g" "$f" > "$TMP/servers.yaml"
@@ -51,7 +52,8 @@ while IFS= read -r f; do
       sed "s/REPLACED_AT_DEPLOY/$(scripts/litellm-checksum.sh)/" "$f" > "$TMP/litellm.yaml"
       report "$f" kubectl diff -f "$TMP/litellm.yaml"
       kubectl create configmap litellm-config -n "$PLATFORM_NS" \
-        --from-file=config.yaml=deploy/50-litellm/config.rendered.yaml --dry-run=client -o yaml > "$TMP/litellm-cm.yaml"
+        --from-file=config.yaml=deploy/50-litellm/config.rendered.yaml \
+        --from-file=agent_obs_guardrail.py=deploy/50-litellm/agent_obs_guardrail.py --dry-run=client -o yaml > "$TMP/litellm-cm.yaml"
       report "litellm-config ConfigMap, rendered from .env" kubectl diff -f "$TMP/litellm-cm.yaml" ;;
     *) report "$f" kubectl diff -f "$f" ;;
   esac
@@ -93,6 +95,22 @@ helm_check() {  # helm_check <release> <chart version from Makefile> <values fil
 echo "==> Helm releases"
 helm_check otel-collector "$(sed -n 's/^COLLECTOR_CHART_VERSION *:= *//p' Makefile)" deploy/20-otel-collector/values.yaml
 helm_check openlit        "$(sed -n 's/^OPENLIT_CHART_VERSION *:= *//p' Makefile)"   deploy/30-openlit/values.yaml
+
+# Perses and MLflow values are rendered by `make` before install (image tag,
+# MinIO endpoint, database credentials from the CNPG Secret); render them the
+# same way here so the comparison is against what make would apply.
+PERSES_TAG=$(scripts/image-tag.sh perses)
+case "$PERSES_TAG" in *-dirty) PP=Always;; *) PP=IfNotPresent;; esac
+sed -e "s|__REGISTRY__|${REGISTRY:-10.1.1.240:5000}|" -e "s|__PERSES_TAG__|$PERSES_TAG|" -e "s|__PULL_POLICY__|$PP|" \
+  deploy/90-perses/values.yaml > "$TMP/perses.repo.yaml"
+helm_check perses "$(sed -n 's/^PERSES_CHART_VERSION *:= *//p' Makefile)" "$TMP/perses.repo.yaml"
+
+set -a; . ./.env; set +a
+u=$(kubectl get secret mlflow-db-app -n "$PLATFORM_NS" -o jsonpath='{.data.username}' 2>/dev/null | base64 -d)
+pw=$(kubectl get secret mlflow-db-app -n "$PLATFORM_NS" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d)
+sed -e "s|__MINIO_ENDPOINT__|$MINIO_ENDPOINT|" -e "s|^    user: \"\".*|    user: \"$u\"|" -e "s|^    password: \"\".*|    password: \"$pw\"|" \
+  deploy/95-mlflow/values.yaml > "$TMP/mlflow.repo.yaml"
+helm_check mlflow "$(sed -n 's/^MLFLOW_CHART_VERSION *:= *//p' Makefile)" "$TMP/mlflow.repo.yaml"
 
 echo
 case $status in

@@ -71,6 +71,11 @@ choice is documented in the plugin's data model docs and highlighted for the rev
 **Next step:** answer the review, starting with the time-bound decision above. The PR is already out of draft;
 add screenshots to the description if they are not there yet.
 
+**Used in this lab, 2026-09-13.** The plugin archive is built from the PR commit inside this repository's
+Perses image (`apps/perses/Dockerfile`) and drives the audit dashboard's run tables and trace view over the
+lab's own ClickHouse (guide chapter 10). One more data point for the reviewers: it works against a table with
+the exporter's schema, the identity attributes of chapters 6 and 7, and 180-span traces.
+
 ### 2. OpenLIT — the ClickHouse schema contract with an existing Collector is undocumented
 
 **Project:** [openlit/openlit](https://github.com/openlit/openlit)
@@ -697,9 +702,18 @@ Carried from the project brief. These are suspected gaps to verify, not findings
 | LiteLLM | GenAI semconv coverage where it meets MCP tool calls | Moot as framed: MCP calls never pass through the gateway, which sees model calls only. Model-identity gap is item 3; reasoning tokens are item 9. |
 | ~~Perses~~ | ~~ClickHouse trace-query SDK missing~~ | **Verified — promoted to Open, item 1** |
 | OpenLIT | Whether other tabs share the logs tab's missing-route defect | Open — check any tab that renders empty or throws a JSON parse error. |
+| LiteLLM | Which key hit a rate limit is not on the 429 span | Observed 2026-09-13 (chapter 7): the refusal is a `POST` span with `error.type=ProxyException`; the key alias is only in the log. Candidate issue. |
+| OTel GenAI semconv | No vocabulary for an authorization decision, an outcome, or a non-content data-access descriptor | Observed 2026-09-13 (chapters 7 and 8): `authz.*`, `triage.outcome`, `agent_obs.access.*` are local names. Candidate proposal once the handoff question (above) is raised. |
+| k3s / kube-router | A new pod's first seconds are unpoliced by NetworkPolicy | Measured 2026-09-13 (chapter 7): +0 s allowed, +2 s blocked. Worth confirming against the kube-router issue tracker before filing. |
 
 ## Filed
 
 | Item | Upstream | Kind | Date |
 | :- | :- | :- | :- |
-| 1. Perses — ClickHouse trace query | [perses/perses#4202](https://github.com/perses/perses/issues/4202) (existing issue, commented) · [perses/plugins#813](https://github.com/perses/plugins/pull/813) | Code change, PR (ready for review) | 2026-09-12 |
+| 1. Perses — ClickHouse trace query | [perses/perses#4202](https://github.com/perses/perses/issues/4202) (existing issue, commented) · [perses/plugins#813](https://github.com/perses/plugins/pull/813) | Code change, PR (ready for review); in use in this lab since 2026-09-13 | 2026-09-12 |
+
+Items 2 to 13 are recorded and not yet filed. Suggested order by value to upstream and
+by how cleanly each reproduces: 13 (guardrail content leak), 7 (span leak), 4
+(content-capture default), 12 (guardrail 500), 3 (model alias), 8 (UI reads zero), 11
+(pricing fetch), 6 (logs tab), 2 (schema contract docs), 9 (reasoning tokens), 5 and 10
+(conventions and OpenLIT MCP spans).

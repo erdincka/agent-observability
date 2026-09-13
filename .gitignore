@@ -34,3 +34,4 @@ kubeconfig*
 charts/**/charts/
 *.tgz
 config.rendered.yaml
+receipts/

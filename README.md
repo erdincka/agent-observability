@@ -34,12 +34,18 @@ the answer is still "no".
 
 ## Where it stands
 
-**Phase 1, "make it observable", is done.** A complete trace spans agent → MCP tool →
-gateway → model, the layers reconcile with each other, and the images rebuild from the
-repository. **Phase 2, "make it governable", is in progress**: identity and authorization
-are built (chapters 6 and 7), with six controls each demonstrable by one make target and
-each leaving a span. Content redaction, routing, retention and the reviewer's checks are
-next. The matrix says where each question stands, row by row.
+**All three phases are built.** Phase 1, observable: a complete trace spans agent → MCP
+tool → gateway → model and the layers reconcile. Phase 2, governable: identity on every
+span, six enforced controls each leaving a span, content redaction on the only write path,
+a restricted store for flagged traces, an S3 archive and a cold tier. Phase 3, public:
+four Perses dashboards as code with a trace view through the plugin this project
+contributed upstream, an MLflow evaluation loop, and this guide. The
+[governance matrix](docs/governance-matrix.md) says where each question stands, row by
+row, including the two rows that remain "partial" by design.
+
+Every finding along the way is in [LEARNINGS.md](LEARNINGS.md); the thirteen upstream gaps
+it produced are in [CONTRIBUTIONS.md](CONTRIBUTIONS.md), one of them already a pull
+request that this lab now runs.
 
 The commands assume [this lab's environment](docs/lab-environment.md), a three-node k3s
 cluster with a few pre-existing pieces. A single-machine path is the next infrastructure
@@ -55,6 +61,8 @@ work, so that a reader can run the guide without a cluster.
 | See what was found in the upstream tools | [CONTRIBUTIONS.md](CONTRIBUTIONS.md) |
 | Read what happened, in order, failures included | [LEARNINGS.md](LEARNINGS.md) |
 | Build it on this lab | [Lab environment](docs/lab-environment.md) and `make help` |
+| See every decision and its alternative | [Decisions](docs/decisions.md) |
+| Look at it: four UIs | OpenLIT (per-trace GenAI view), LiteLLM (keys, teams, guardrails), Perses (the dashboards and trace view), MLflow (evaluation runs). Hostnames in the [lab environment](docs/lab-environment.md) page |
 
 ## What this deliberately is not
 
@@ -69,8 +77,7 @@ work, so that a reader can run the guide without a cluster.
 - **Not a production observability platform.** Single-node ClickHouse, node-pinned volumes,
   a lab's worth of hygiene. Where that would not do in an enterprise, the guide says so.
 - **No Tempo, Grafana or LangFlow**, by choice. ClickHouse is the trace store, OpenLIT the
-  phase 1 UI, and Perses is planned for dashboards. MLflow is deferred to an optional
-  evaluation chapter.
+  per-trace UI, Perses the dashboards, MLflow the evaluation loop.
 
 ## Architecture
 
@@ -84,27 +91,36 @@ flowchart LR
     WDB[("workflow-db<br/>CloudNativePG")]
   end
   subgraph platform["agent-obs-platform"]
-    GW[LiteLLM gateway]
+    GW["LiteLLM gateway<br/>keys, limits, guardrail"]
     OL["Ollama<br/>default route"]
     LDB[("litellm-db<br/>CloudNativePG")]
-    COL[OTel Collector]
-    CH[(ClickHouse)]
+    COL["OTel Collector<br/>redaction, routing, archive"]
+    CH[("ClickHouse<br/>otel + otel_restricted<br/>hot + S3 cold tier")]
     UI[OpenLIT UI]
+    PER["Perses<br/>dashboards as code"]
+    MLF["MLflow<br/>evaluation"]
+    MDB[("mlflow-db")]
   end
+  M4["mcp-ops<br/>(state-changing tool)"]
   EXT["external route<br/>opt-in"]
   PROM["Prometheus<br/>pre-existing"]
-  MINIO[("MinIO VM<br/>outside the cluster,<br/>not yet wired")]
+  MINIO[("MinIO VM<br/>archive, cold tier,<br/>artifacts")]
 
-  WF -- "MCP, streamable HTTP" --> M1 & M2 & M3
+  WF -- "MCP, streamable HTTP<br/>bearer token per role" --> M1 & M2 & M3 & M4
   M1 --> PROM
-  WF -- "every model call" --> GW
+  WF -- "every model call<br/>one key per agent" --> GW
   GW --> OL
   GW -.-> EXT
   WF --> WDB
   GW --> LDB
-  WF & M1 & M2 & M3 & GW -- OTLP --> COL
+  WF & M1 & M2 & M3 & M4 & GW -- OTLP --> COL
   COL -- "only writer" --> CH
+  COL -- "every batch, redacted" --> MINIO
+  CH -. "parts older than a day" .-> MINIO
   UI -- reads --> CH
+  PER -- "read-only user" --> CH
+  MLF --> MDB
+  MLF -- artifacts --> MINIO
 ```
 
 Two components are control points, and they do different jobs. **The gateway enforces at
@@ -128,8 +144,15 @@ The properties that matter, each established in LEARNINGS.md rather than assumed
   workflow and tool servers set `capture_message_content=False`, because the OpenLIT SDK
   defaults it to `True`.
 - **Attribution is per agent.** Each agent node records its own token usage (reasoning
-  included), model-call count, finish reasons and an `ok` / `truncated` / `empty` / `degraded`
-  outcome on its own span.
+  included), model-call count, finish reasons and a `denied` / `truncated` / `empty` /
+  `degraded` / `ok` outcome on its own span.
+- **Identity is on every span, and enforcement is on credentials.** The principal and the
+  agent travel as baggage; the gateway enforces on a per-agent virtual key and the tool
+  servers on a per-role bearer token, and every decision is an attribute on the span
+  where it was made.
+- **Content cannot reach storage even when a component emits it.** The Collector's
+  redaction masks nine key patterns on spans and log records, and the spans say what was
+  masked. This caught LiteLLM's guardrail putting full prompts on a `no_content` gateway.
 
 ## Stack
 
@@ -145,9 +168,9 @@ The properties that matter, each established in LEARNINGS.md rather than assumed
 | UI | OpenLIT | 1.24.0 |
 | App state | PostgreSQL on CloudNativePG | 18.4 |
 | Object storage | MinIO, standalone VM | RELEASE.2025-09-07T16-13-09Z |
+| Dashboards | Perses, with the ClickHouse trace-query plugin from [perses/plugins#813](https://github.com/perses/plugins/pull/813) | v0.54.0 (chart 0.23.2) |
+| Evaluation | MLflow | 3.16.0 (chart 1.11.7) |
 | Runtime | Python | 3.12.14 |
-
-Planned, not deployed: Perses (phase 3). Deferred: MLflow (optional evaluation chapter).
 
 ## Running it
 
@@ -161,6 +184,12 @@ make step5               # build the MCP image, deploy the three tool servers, p
 make workflow-image
 make workflow-probe      # one-node plumbing proof
 make workflow-triage     # a real run; INCIDENT= and ROUTE=local|remote override
+make litellm-keys && make netpol             # chapters 6-7: identity, authorization
+make ch-restricted-user && make retention    # chapter 8: restricted store, cold tier
+make perses-image && make perses             # chapter 10: dashboards
+make mlflow && make evaluate                 # chapter 11: evaluation
+make demo-<name>                             # one control each; `make help` lists them
+make receipt RUN=<run id>                    # chapter 9: the reviewer's receipt
 ```
 
 Prerequisites, what is lab-specific, and how the UIs are reached:
@@ -177,6 +206,8 @@ Each probe isolates one layer, so "which layer is it?" is answered in minutes.
 | `./scripts/gateway-trace.sh local` | Does the gateway join an incoming trace, and is content absent from every span? |
 | `make mcp-probe` | Does each tool server answer MCP? |
 | `make drift` | Does the cluster run what this repository describes? |
+| `make demo-content-redacted` | With SDK content capture forced on, does any content reach the store? |
+| `make receipt RUN=` | Is one run complete, reconciled, content-free, routed and fingerprinted? |
 
 A trace is only complete if no span points at a parent that was never exported. This query
 is what caught a span leak that dropped the link between every agent and its model calls:
@@ -191,11 +222,12 @@ WHERE TraceId = '<trace id>' AND ParentSpanId != ''
 
 ```
 docs/guide/     the guide, one experiment per chapter, in reading order
-docs/           governance matrix, this lab's environment, the runbooks the tool server searches
+docs/           governance matrix, decisions, this lab's environment, the runbooks the tool server searches
 deploy/         numbered manifests and Helm values; the numbering is the deployment order
 apps/workflow   the LangGraph triage workflow
-apps/mcp        the three MCP tool servers (one image, three Deployments)
-scripts/        build, tagging, probes and the drift check
+apps/mcp        the four MCP tool servers (one image, four Deployments)
+apps/perses     Perses with the contributed ClickHouse trace-query plugin
+scripts/        build, tagging, probes, the receipt, the evaluation loop and the drift check
 LEARNINGS.md    the chronological log, failures kept in
 CONTRIBUTIONS.md  upstream gaps, and what was filed
 TODO.md         deferred work

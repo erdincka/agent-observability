@@ -9,18 +9,21 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-app="${1:?usage: image-tag.sh <workflow|mcp>}"
+app="${1:?usage: image-tag.sh <workflow|mcp|perses>}"
 case "$app" in
   workflow) inputs=(apps/workflow) ;;
   # The MCP image also bakes in docs/runbooks. It bakes in .git as well, for the
   # changes server, but that is a snapshot of history taken at first build, not
   # an input: an existing clean tag is never rebuilt (scripts/build-image.sh).
   mcp)      inputs=(apps/mcp docs/runbooks) ;;
+  perses)   inputs=(apps/perses) ;;
   *) echo "image-tag.sh: unknown app '$app'" >&2; exit 2 ;;
 esac
 
 sha=$(git log -1 --format=%H -- "${inputs[@]}" | cut -c1-12)
-[ -n "$sha" ] || { echo "image-tag.sh: no commit touches ${inputs[*]}" >&2; exit 1; }
+# An app that has never been committed has no commit of its own yet: key it to
+# HEAD, and the -dirty suffix below says the build is not any commit.
+[ -n "$sha" ] || sha=$(git rev-parse HEAD | cut -c1-12)
 
 if [ -n "$(git status --porcelain -- "${inputs[@]}")" ]; then
   echo "${sha}-dirty"

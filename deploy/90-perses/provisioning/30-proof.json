@@ -1,0 +1,263 @@
+{
+  "kind": "Dashboard",
+  "metadata": {
+    "name": "proof",
+    "project": "agent-obs"
+  },
+  "spec": {
+    "display": {
+      "name": "3. Can you prove it later?"
+    },
+    "duration": "24h",
+    "refreshInterval": "1m",
+    "panels": {
+      "intro": {
+        "kind": "Panel",
+        "spec": {
+          "display": {
+            "name": "Reading this page"
+          },
+          "plugin": {
+            "kind": "Markdown",
+            "spec": {
+              "text": "The checks `make receipt RUN=` runs per run, as trends. A dangling parent is a span whose parent was never exported: the only acceptable count is zero. Content-bearing keys are those the Collector's redaction masks; `redaction.masked.keys` on a span means a component emitted content and the pipeline removed it. Flagged traces are the ones tail sampling copied to the restricted store."
+            }
+          }
+        }
+      },
+      "dangling": {
+        "kind": "Panel",
+        "spec": {
+          "display": {
+            "name": "Spans whose parent was never exported (must be 0)"
+          },
+          "plugin": {
+            "kind": "TimeSeriesChart",
+            "spec": {
+              "legend": {
+                "position": "bottom",
+                "mode": "list"
+              },
+              "visual": {
+                "display": "line",
+                "lineWidth": 1.5
+              }
+            }
+          },
+          "queries": [
+            {
+              "kind": "TimeSeriesQuery",
+              "spec": {
+                "plugin": {
+                  "kind": "ClickHouseTimeSeriesQuery",
+                  "spec": {
+                    "query": "SELECT toStartOfInterval(Timestamp, INTERVAL 5 MINUTE) AS time, countIf(ParentSpanId!='' AND ParentSpanId NOT IN (SELECT SpanId FROM otel.otel_traces WHERE Timestamp BETWEEN '{start}' AND '{end}')) AS dangling FROM otel.otel_traces WHERE Timestamp BETWEEN '{start}' AND '{end}' GROUP BY time ORDER BY time"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      "reconcile": {
+        "kind": "Panel",
+        "spec": {
+          "display": {
+            "name": "Input tokens: agents vs gateway (must overlap)"
+          },
+          "plugin": {
+            "kind": "TimeSeriesChart",
+            "spec": {
+              "legend": {
+                "position": "bottom",
+                "mode": "list"
+              },
+              "visual": {
+                "display": "line",
+                "lineWidth": 1.5
+              }
+            }
+          },
+          "queries": [
+            {
+              "kind": "TimeSeriesQuery",
+              "spec": {
+                "plugin": {
+                  "kind": "ClickHouseTimeSeriesQuery",
+                  "spec": {
+                    "query": "SELECT toStartOfInterval(Timestamp, INTERVAL 5 MINUTE) AS time, sumIf(toUInt64OrZero(SpanAttributes['gen_ai.usage.input_tokens']), SpanAttributes['gen_ai.operation.name']='invoke_agent') AS agents, sumIf(toUInt64OrZero(SpanAttributes['gen_ai.usage.input_tokens']), ServiceName='litellm-gateway' AND SpanName LIKE 'chat%') AS gateway FROM otel.otel_traces WHERE SpanAttributes['gen_ai.usage.input_tokens']!='' AND Timestamp BETWEEN '{start}' AND '{end}' GROUP BY time ORDER BY time"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      "redacted": {
+        "kind": "Panel",
+        "spec": {
+          "display": {
+            "name": "Spans the Collector redacted content from, by service"
+          },
+          "plugin": {
+            "kind": "TimeSeriesChart",
+            "spec": {
+              "legend": {
+                "position": "bottom",
+                "mode": "list"
+              },
+              "visual": {
+                "display": "bar",
+                "stack": "all"
+              }
+            }
+          },
+          "queries": [
+            {
+              "kind": "TimeSeriesQuery",
+              "spec": {
+                "plugin": {
+                  "kind": "ClickHouseTimeSeriesQuery",
+                  "spec": {
+                    "query": "SELECT toStartOfInterval(Timestamp, INTERVAL 5 MINUTE) AS time, countIf(ServiceName='triage-workflow') AS workflow, countIf(ServiceName='litellm-gateway') AS gateway, countIf(ServiceName LIKE 'mcp-%') AS tool_servers FROM otel.otel_traces WHERE SpanAttributes['redaction.masked.keys']!='' AND Timestamp BETWEEN '{start}' AND '{end}' GROUP BY time ORDER BY time"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      "flagged": {
+        "kind": "Panel",
+        "spec": {
+          "display": {
+            "name": "Traces routed to the restricted store"
+          },
+          "plugin": {
+            "kind": "TimeSeriesChart",
+            "spec": {
+              "legend": {
+                "position": "bottom",
+                "mode": "list"
+              },
+              "visual": {
+                "display": "line",
+                "lineWidth": 1.5
+              }
+            }
+          },
+          "queries": [
+            {
+              "kind": "TimeSeriesQuery",
+              "spec": {
+                "plugin": {
+                  "kind": "ClickHouseTimeSeriesQuery",
+                  "spec": {
+                    "query": "SELECT toStartOfInterval(Timestamp, INTERVAL 5 MINUTE) AS time, uniq(TraceId) AS flagged_traces FROM otel_restricted.otel_traces WHERE Timestamp BETWEEN '{start}' AND '{end}' GROUP BY time ORDER BY time"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      "services": {
+        "kind": "Panel",
+        "spec": {
+          "display": {
+            "name": "Spans per service"
+          },
+          "plugin": {
+            "kind": "TimeSeriesChart",
+            "spec": {
+              "legend": {
+                "position": "bottom",
+                "mode": "list"
+              },
+              "visual": {
+                "display": "bar",
+                "stack": "all"
+              }
+            }
+          },
+          "queries": [
+            {
+              "kind": "TimeSeriesQuery",
+              "spec": {
+                "plugin": {
+                  "kind": "ClickHouseTimeSeriesQuery",
+                  "spec": {
+                    "query": "SELECT toStartOfInterval(Timestamp, INTERVAL 5 MINUTE) AS time, countIf(ServiceName='triage-workflow') AS workflow, countIf(ServiceName='litellm-gateway') AS gateway, countIf(ServiceName LIKE 'mcp-%') AS tool_servers FROM otel.otel_traces WHERE Timestamp BETWEEN '{start}' AND '{end}' GROUP BY time ORDER BY time"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "layouts": [
+      {
+        "kind": "Grid",
+        "spec": {
+          "items": [
+            {
+              "x": 0,
+              "y": 0,
+              "width": 24,
+              "height": 3,
+              "content": {
+                "$ref": "#/spec/panels/intro"
+              }
+            },
+            {
+              "x": 0,
+              "y": 3,
+              "width": 12,
+              "height": 7,
+              "content": {
+                "$ref": "#/spec/panels/dangling"
+              }
+            },
+            {
+              "x": 12,
+              "y": 3,
+              "width": 12,
+              "height": 7,
+              "content": {
+                "$ref": "#/spec/panels/reconcile"
+              }
+            },
+            {
+              "x": 0,
+              "y": 10,
+              "width": 12,
+              "height": 7,
+              "content": {
+                "$ref": "#/spec/panels/redacted"
+              }
+            },
+            {
+              "x": 12,
+              "y": 10,
+              "width": 12,
+              "height": 7,
+              "content": {
+                "$ref": "#/spec/panels/flagged"
+              }
+            },
+            {
+              "x": 0,
+              "y": 17,
+              "width": 24,
+              "height": 7,
+              "content": {
+                "$ref": "#/spec/panels/services"
+              }
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

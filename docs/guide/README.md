@@ -2,8 +2,7 @@
 
 Read in order. Each chapter is one experiment: the question it answers, what to run, what
 to look at, what you should see, what it means, where it breaks, and what changes in an
-enterprise. The built chapters are reproducible today on [this lab](../lab-environment.md);
-the unbuilt ones are honest plans with their decisions listed.
+enterprise. Every chapter is reproducible today on [this lab](../lab-environment.md).
 
 | # | Chapter | Audit question | Status |
 | -: | :- | :- | :- |
@@ -16,9 +15,9 @@ the unbuilt ones are honest plans with their decisions listed.
 | 6 | [Identity](06-identity.md) | on whose behalf | built |
 | 7 | [Authorization](07-authorization.md) | with what data access | built |
 | 8 | [Content, redaction and retention](08-content-and-retention.md) | with what data access, can you prove it | built |
-| 9 | [Proving it later](09-proving-it.md) | can you prove it | not built |
-| 10 | [Dashboards as code](10-dashboards.md) | all four | not built |
-| 11 | [Evaluation](11-evaluation.md) | was it right | deferred |
+| 9 | [Proving it later](09-proving-it.md) | can you prove it | built |
+| 10 | [Dashboards as code](10-dashboards.md) | all four | built |
+| 11 | [Evaluation](11-evaluation.md) | was it right | built |
 
 The [governance matrix](../governance-matrix.md) is the cross-cutting view: every
 sub-question, its control, its evidence, and its status.
