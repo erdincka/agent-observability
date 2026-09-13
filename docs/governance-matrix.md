@@ -35,13 +35,13 @@ with a documented gap; **no** not answerable today.
 | Sub-question | Control / mechanism | Enforced at | Evidence in the trace | Status | Gap |
 | :- | :- | :- | :- | :- | :- |
 | Which tool, which backend | Tool server spans and their outbound HTTP spans | Tool server | `tools/call <name>` → `GET` | yes | |
-| What the tool was asked for | Withheld: `gen_ai.tool.call.arguments` is content | Tool server | nothing | no | A non-content record of access is a design decision. Chapter 8 |
+| What the tool was asked for | A resource identifier and an argument hash, never the arguments | Tool server | `agent_obs.access.resource`, `agent_obs.access.args_sha256` on every tool span | partial | Local names; the hash is reversible for small argument spaces; the resource string carries the meaning |
 | Was the tool permitted for this agent | Role→tool policy on a bearer token | Tool server | `authz.decision`, `authz.role`, `authz.tool` on every tool span; status ERROR on deny | yes | Static policy and tokens; local attribute names |
 | Was the model permitted for this key | Model allow-list on the virtual key | Gateway | HTTP 403 on the gateway span; `triage.denied_by=gateway:model_access` on the agent span | yes | |
 | Was the call within quota | rpm limit on the virtual key | Gateway | 429 spans with `error.type=ProxyException`; run duration | yes | Which key hit the limit is in the log, not on the 429 span |
 | Was the content permitted to reach a model | Pre-call guardrail | Gateway | `execute_guardrail <name>` span with `litellm.guardrail.status` | yes | Only with `GuardrailRaisedException` and the logging decorator; otherwise a 500 and no span |
 | Could the agent reach anything else | NetworkPolicy, default-deny egress on governed pods | Cluster | a connection that never completes; `make demo-egress-denied` | yes | First ~2 s of a pod unprotected on k3s; no span for a blocked connection |
-| Was content stored anywhere | `no_content` at the gateway, `capture_message_content=False` in SDKs | Gateway, SDKs | probes grep stored values for prompt text | yes | Enforced by configuration, not by the pipeline. Chapter 8 moves it to the Collector |
+| Was content stored anywhere | Collector `redaction` on the only write path, spans and logs; SDK and gateway settings as the first line | Collector | `redaction.masked.keys` on every touched span; `make demo-content-redacted` proves zero content with capture forced on | yes | LiteLLM's guardrail record carried prompts past `no_content` (CONTRIBUTIONS 13); only the Collector rule caught it |
 
 ## Can you prove it later?
 
@@ -49,8 +49,9 @@ with a documented gap; **no** not answerable today.
 | :- | :- | :- | :- | :- | :- |
 | Is the trace complete | Dangling-parent query | Store | count of spans with a missing parent = 0 | yes | Manual. Chapter 9 packages it |
 | Do the layers agree | Agent sums equal gateway sums | Store | per-run reconciliation | yes | Manual |
-| How long is it kept | ClickHouse TTL | Store | 720 hours | partial | Retention tier not wired. Chapter 8 |
-| Has it been altered | Archive with versioning, per-run digest | MinIO | none yet | no | Chapter 9 |
+| How long is it kept | ClickHouse tiered policy and TTL; S3 archive | Store, MinIO | parts older than a day on `s3_cold`; delete after 7 years; every batch archived as OTLP JSON | yes | The archive is not object-locked |
+| Which traces need a reviewer | Tail sampling into a restricted database | Collector | flagged traces whole in `otel_restricted`; a reader scoped to it | yes | 45 s decision window; a span arriving later than that is not re-evaluated |
+| Has it been altered | Archive with versioning, per-run digest | MinIO | versioning on; digest in chapter 9 | partial | Chapter 9 |
 | Can a reviewer reproduce the checks | Queries over standard tables | Store | | partial | Not packaged. Chapter 9 |
 | Can the lab itself be rebuilt | Locked dependencies, digest-pinned bases, immutable tags, `make drift` | Repository | | yes | Full rebuild onto an empty cluster not re-run |
 
@@ -58,6 +59,8 @@ with a documented gap; **no** not answerable today.
 
 At the end of phase 1 every "yes" was on the first question. After chapters 6 and 7 the
 second question is answered on every span and the third has enforcement with evidence for
-tools, models, quota, content and network. What remains "no" is on the fourth question:
-what a tool was asked for (chapter 8), and whether the record has been altered or will
-still exist in seven years (chapters 8 and 9).
+tools, models, quota, content and network. After chapter 8, content cannot reach
+storage even when a component emits it, data access has a non-content record, flagged
+traces have a store of their own, and the record outlives the hot tier. What remains is
+chapter 9: packaging the reviewer's checks and a digest that shows the archived copy is
+the one written.

@@ -6,6 +6,7 @@ default we are choosing not to accept.
 
 import importlib
 import logging
+import os
 import pathlib
 
 import openlit
@@ -154,11 +155,21 @@ def init_telemetry() -> None:
     # Before init, not after. See the docstring — the ordering is the whole fix.
     _guard_langchain_span_leak()
 
+    # Chapter 8's experiment: turn content capture ON, deliberately, and prove
+    # the Collector strips it before storage. Never on by default; the demo
+    # sets OPENLIT_CAPTURE_CONTENT=true on one run and the run says so loudly.
+    capture = os.getenv("OPENLIT_CAPTURE_CONTENT", "false").lower() == "true"
+    if capture:
+        log.warning(
+            "OPENLIT_CAPTURE_CONTENT=true: this process WILL emit prompt and "
+            "completion text on its spans. The Collector's redaction is what "
+            "keeps it out of the store (guide chapter 8)."
+        )
     openlit.init(
         application_name=settings.service_name,
         environment=settings.environment,
         otlp_endpoint=settings.otlp_endpoint,
-        capture_message_content=False,
+        capture_message_content=capture,
         # GPU and host metrics belong to the platform, not the workload, and
         # Prometheus already collects them in this lab.
         collect_gpu_stats=False,

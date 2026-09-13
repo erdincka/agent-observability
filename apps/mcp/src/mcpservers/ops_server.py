@@ -44,7 +44,7 @@ def _client() -> httpx.Client:
 @mcp.tool()
 def list_deployments(ctx: Context) -> list[dict]:
     """List deployments in this namespace with replica counts and last restart."""
-    guard(ctx, "list_deployments")
+    guard(ctx, "list_deployments", resource=f"k8s:deployments/{NAMESPACE}")
     with _client() as c:
         r = c.get(f"/apis/apps/v1/namespaces/{NAMESPACE}/deployments")
         r.raise_for_status()
@@ -63,7 +63,7 @@ def list_deployments(ctx: Context) -> list[dict]:
 @mcp.tool()
 def restart_deployment(ctx: Context, name: str) -> dict:
     """Roll-restart one deployment in this namespace. Changes state: needs the operator role."""
-    guard(ctx, "restart_deployment")
+    guard(ctx, "restart_deployment", resource=f"k8s:deployments/{NAMESPACE}/{name}", name=name)
     patch = {
         "spec": {"template": {"metadata": {"annotations": {
             "kubectl.kubernetes.io/restartedAt": dt.datetime.now(dt.timezone.utc).isoformat(),

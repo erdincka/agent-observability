@@ -36,7 +36,7 @@ def _git(*args: str) -> str:
 @mcp.tool()
 def recent_commits(ctx: Context, limit: int = 10) -> list[dict]:
     """List recent commits, most recent first."""
-    guard(ctx, "recent_commits")
+    guard(ctx, "recent_commits", resource="git:log", limit=limit)
     limit = max(1, min(limit, 100))
     out = _git("log", f"-{limit}", "--pretty=format:%H%x1f%an%x1f%ar%x1f%s")
     commits = []
@@ -52,7 +52,7 @@ def recent_commits(ctx: Context, limit: int = 10) -> list[dict]:
 @mcp.tool()
 def commit_detail(ctx: Context, sha: str) -> str:
     """Show the message and changed-file stat for one commit."""
-    guard(ctx, "commit_detail")
+    guard(ctx, "commit_detail", resource="git:commit", sha=sha)
     if not sha.replace("-", "").isalnum():
         return "invalid revision"
     return _git("show", "--stat", "--pretty=medium", sha)
@@ -61,7 +61,7 @@ def commit_detail(ctx: Context, sha: str) -> str:
 @mcp.tool()
 def files_changed_since(ctx: Context, rev: str = "HEAD~5") -> list[str]:
     """List files changed since a revision — the 'what moved' question."""
-    guard(ctx, "files_changed_since")
+    guard(ctx, "files_changed_since", resource="git:diff", rev=rev)
     if not rev.replace("~", "").replace("^", "").replace("-", "").isalnum():
         return ["invalid revision"]
     out = _git("diff", "--name-only", f"{rev}..HEAD")

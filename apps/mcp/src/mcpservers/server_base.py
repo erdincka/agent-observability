@@ -5,6 +5,7 @@ joins anything — the `mcp` SDK does that — and instead reports when a tool
 call arrives without trace context. See `propagation.py` for the record.
 """
 
+import hashlib
 import json
 import logging
 import os
@@ -59,8 +60,33 @@ def _role_of(ctx: Context) -> str:
     return _TOKENS.get(token, "anonymous")
 
 
-def guard(ctx: Context, tool: str) -> None:
+def record_access(resource: str, **args: Any) -> None:
+    """The non-content record of what a tool touched (chapter 8).
+
+    With content capture off, `gen_ai.tool.call.arguments` is withheld and the
+    trace knows only *which* tool ran. This adds two things that are not
+    content: a resource identifier the operator chooses per tool
+    (`prometheus:query`, `runbook:<name>`, `k8s:deployments/<ns>`), and a
+    short hash of the canonical arguments. The hash answers "did two runs ask
+    for the same thing" and "was this argument set seen before" without
+    revealing the arguments; it is not reversible in practice for free-text
+    queries, and it is trivially reversible for a small enumerable input, which
+    is why the resource string carries the meaning and the hash only the
+    identity. Local attribute names, flagged as such in the guide.
+    """
+    span = trace.get_current_span()
+    span.set_attribute("agent_obs.access.resource", resource)
+    if args:
+        canonical = json.dumps(args, sort_keys=True, default=str).encode()
+        span.set_attribute("agent_obs.access.args_sha256", hashlib.sha256(canonical).hexdigest()[:16])
+
+
+def guard(ctx: Context, tool: str, resource: str | None = None, **args: Any) -> None:
     """Per-call check: is this caller's role allowed to run this tool?
+
+    Also records the data-access descriptor (`record_access`) when `resource`
+    is given, before the decision, so a denied call still says what it was
+    denied access *to*.
 
     Every tool calls this first. Both outcomes are recorded on the tool's
     span — `authz.decision`, `authz.role`, `authz.tool` — because an
@@ -73,6 +99,8 @@ def guard(ctx: Context, tool: str) -> None:
     authorization vocabulary. Flagged as such in the guide.
     """
     join_caller_trace(ctx)
+    if resource is not None:
+        record_access(resource, **args)
     role = _role_of(ctx)
     allowed = _policy().get(role, [])
     decision = "allow" if ("*" in allowed or tool in allowed) else "deny"

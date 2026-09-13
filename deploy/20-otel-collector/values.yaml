@@ -23,6 +23,10 @@ command:
 extraEnvsFrom:
   - secretRef:
       name: clickhouse-auth
+  # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / S3_ENDPOINT for the archive
+  # exporter (chapter 8). The scoped MinIO user, never the root credential.
+  - secretRef:
+      name: minio-auth
 
 # The chart opens Jaeger and Zipkin ports by default. This project has exactly
 # one ingest protocol and every unused listener is surface we would have to
@@ -50,23 +54,75 @@ config:
         http: { endpoint: 0.0.0.0:4318 }
 
   processors:
-    # Ordered deliberately: shed load before doing work, batch immediately before
-    # export. Phase 2's redaction, routing and tail sampling insert between these.
+    # Ordered deliberately: shed load before doing work, redact before anything
+    # can be stored, batch immediately before export.
     memory_limiter:
       check_interval: 1s
       limit_percentage: 80
       spike_limit_percentage: 20
-      # NOTE (phase 2): redaction / attribute filtering goes here.
-      # NOTE (phase 2): tail sampling goes here.
+
+    # ---- chapter 8: the content control, on the only write path -------------
+    # Masks the value of any attribute whose key matches, on spans AND on log
+    # records (OpenLIT emits content as log-record attributes too). The list is
+    # grounded in what was measured with content capture on (LEARNINGS,
+    # 2026-09-13): the SDK's message attributes, its MCP payloads, the
+    # checkpointer's SQL, and — found by the same experiment — LiteLLM's
+    # guardrail success record, which carries the full request on a gateway
+    # configured for no_content (CONTRIBUTIONS item 13).
+    #
+    # `summary: debug` appends redaction.masked.keys and .count to every record
+    # it touched, so the trace itself says redaction happened and to what.
+    redaction/content:
+      allow_all_keys: true
+      blocked_key_patterns:
+        - "^gen_ai\\.input\\.messages$"
+        - "^gen_ai\\.output\\.messages$"
+        - "^gen_ai\\.system_instructions$"
+        - "^gen_ai\\.prompt.*"
+        - "^gen_ai\\.completion.*"
+        - "^gen_ai\\.content\\..*"
+        - "^gen_ai\\.tool\\.call\\.arguments$"
+        - "^gen_ai\\.tool\\.call\\.result$"
+        - "^mcp\\.request\\.payload$"
+        - "^mcp\\.response\\.payload$"
+        - "^litellm\\.guardrail\\.response$"
+        - "^db\\.query\\.text$"
+        - "^db\\.statement$"
+      summary: debug
+
+    # ---- chapter 8: which traces go to the restricted store -----------------
+    # A trace is "flagged" if any span in it records a refusal, a degraded
+    # outcome or an error. Flagged traces are copied in full to a second
+    # database under separate access control; everything else stays only in
+    # the main store. The decision is per trace, which is what the OpenLIT UI
+    # cannot express (chapter 5) and the Collector can.
+    tail_sampling/flagged:
+      decision_wait: 45s
+      num_traces: 5000
+      policies:
+        - name: outcome-not-ok
+          type: string_attribute
+          string_attribute: { key: triage.outcome, values: [denied, truncated, empty, degraded] }
+        - name: tool-denied
+          type: string_attribute
+          string_attribute: { key: authz.decision, values: [deny] }
+        - name: guardrail-intervened
+          type: string_attribute
+          string_attribute: { key: litellm.guardrail.status, values: [guardrail_intervened] }
+        - name: error-status
+          type: status_code
+          status_code: { status_codes: [ERROR] }
+
     batch:
       timeout: 5s
       send_batch_size: 1024
 
   exporters:
     debug:
-      # Turned down to `basic` once the pipeline is proven; during bring-up the
-      # only thing worse than no telemetry is telemetry you cannot see.
-      verbosity: detailed
+      # `detailed` printed every attribute to the Collector's own log — which,
+      # once content capture can be switched on upstream of redaction, would
+      # have been a second place content lands. Basic since chapter 8.
+      verbosity: basic
     clickhouse:
       endpoint: tcp://clickhouse.agent-obs-platform.svc.cluster.local:9000?dial_timeout=10s&compress=lz4
       database: ${env:CLICKHOUSE_DB}
@@ -85,16 +141,57 @@ config:
         initial_interval: 5s
         max_interval: 30s
 
+    # ---- chapter 8: the restricted store ------------------------------------
+    # Same ClickHouse, a second database. The exporter creates it and its
+    # tables. Access is what differs: `make ch-restricted-user` creates a reader
+    # that can SELECT here and nowhere else, and the OpenLIT UI never reads it.
+    clickhouse/restricted:
+      endpoint: tcp://clickhouse.agent-obs-platform.svc.cluster.local:9000?dial_timeout=10s&compress=lz4
+      database: otel_restricted
+      username: ${env:CLICKHOUSE_USER}
+      password: ${env:CLICKHOUSE_PASSWORD}
+      create_schema: true
+      traces_table_name: otel_traces
+      ttl: 0
+      timeout: 10s
+      retry_on_failure: { enabled: true, initial_interval: 5s, max_interval: 30s }
+
+    # ---- chapter 8: the archive ---------------------------------------------
+    # Every trace batch, after redaction, as OTLP JSON objects in MinIO. The
+    # bucket has versioning on, so an object once written cannot be silently
+    # replaced. This is the copy chapter 9's receipt checks against and the
+    # one that outlives ClickHouse's hot TTL.
+    awss3/archive:
+      s3uploader:
+        region: us-east-1
+        s3_bucket: otel-archive
+        s3_prefix: traces
+        s3_partition_format: "%Y/%m/%d/%H"
+        endpoint: ${env:S3_ENDPOINT}
+        s3_force_path_style: true
+        disable_ssl: true
+        compression: gzip
+      marshaler: otlp_json
+      timeout: 20s
+      sending_queue: { enabled: true, queue_size: 200 }
+
   service:
     extensions: [health_check]
     pipelines:
+      # Main store and archive: everything, redacted.
       traces:
         receivers: [otlp]
-        processors: [memory_limiter, batch]
-        exporters: [clickhouse, debug]
+        processors: [memory_limiter, redaction/content, batch]
+        exporters: [clickhouse, awss3/archive, debug]
+      # Restricted store: only flagged traces, whole, redacted. A second
+      # pipeline on the same receiver — the Collector fans out.
+      traces/restricted:
+        receivers: [otlp]
+        processors: [memory_limiter, redaction/content, tail_sampling/flagged, batch]
+        exporters: [clickhouse/restricted]
       logs:
         receivers: [otlp]
-        processors: [memory_limiter, batch]
+        processors: [memory_limiter, redaction/content, batch]
         exporters: [clickhouse, debug]
       # Enabled after step 4, not before. Nulling metrics meant the OpenLIT SDK
       # got a 404 from /v1/metrics on every single workflow run — a permanent

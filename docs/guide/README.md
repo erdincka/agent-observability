@@ -15,7 +15,7 @@ the unbuilt ones are honest plans with their decisions listed.
 | 5 | [Attribution per agent](05-attribution.md) | what did it do, by how much | built |
 | 6 | [Identity](06-identity.md) | on whose behalf | built |
 | 7 | [Authorization](07-authorization.md) | with what data access | built |
-| 8 | [Content, redaction and retention](08-content-and-retention.md) | with what data access, can you prove it | not built |
+| 8 | [Content, redaction and retention](08-content-and-retention.md) | with what data access, can you prove it | built |
 | 9 | [Proving it later](09-proving-it.md) | can you prove it | not built |
 | 10 | [Dashboards as code](10-dashboards.md) | all four | not built |
 | 11 | [Evaluation](11-evaluation.md) | was it right | deferred |

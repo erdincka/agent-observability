@@ -26,7 +26,7 @@ def instant_query(ctx: Context, promql: str) -> dict:
     Args:
         promql: a PromQL expression, e.g. 'up' or 'rate(node_cpu_seconds_total[5m])'
     """
-    guard(ctx, "instant_query")
+    guard(ctx, "instant_query", resource="prometheus:query", promql=promql)
     r = httpx.get(f"{PROMETHEUS_URL}/api/v1/query", params={"query": promql}, timeout=30)
     r.raise_for_status()
     return r.json()
@@ -35,7 +35,7 @@ def instant_query(ctx: Context, promql: str) -> dict:
 @mcp.tool()
 def list_metric_names(ctx: Context, prefix: str = "", limit: int = 50) -> list[str]:
     """List metric names known to Prometheus, optionally filtered by prefix."""
-    guard(ctx, "list_metric_names")
+    guard(ctx, "list_metric_names", resource="prometheus:label/__name__", prefix=prefix, limit=limit)
     r = httpx.get(f"{PROMETHEUS_URL}/api/v1/label/__name__/values", timeout=30)
     r.raise_for_status()
     names = r.json().get("data", [])
@@ -47,7 +47,7 @@ def list_metric_names(ctx: Context, prefix: str = "", limit: int = 50) -> list[s
 @mcp.tool()
 def active_alerts(ctx: Context) -> dict:
     """Return currently firing Prometheus alerts — the usual start of a triage."""
-    guard(ctx, "active_alerts")
+    guard(ctx, "active_alerts", resource="prometheus:alerts")
     r = httpx.get(f"{PROMETHEUS_URL}/api/v1/alerts", timeout=30)
     r.raise_for_status()
     return r.json()

@@ -25,14 +25,14 @@ def _docs() -> list[pathlib.Path]:
 @mcp.tool()
 def list_runbooks(ctx: Context) -> list[str]:
     """List available runbooks by name."""
-    guard(ctx, "list_runbooks")
+    guard(ctx, "list_runbooks", resource="runbooks:index")
     return [p.stem for p in _docs()]
 
 
 @mcp.tool()
 def search_runbooks(ctx: Context, query: str, limit: int = 5) -> list[dict]:
     """Find runbooks mentioning a term. Returns name and matching lines."""
-    guard(ctx, "search_runbooks")
+    guard(ctx, "search_runbooks", resource="runbooks:search", query=query, limit=limit)
     needle = query.lower().strip()
     if not needle:
         return []
@@ -48,7 +48,7 @@ def search_runbooks(ctx: Context, query: str, limit: int = 5) -> list[dict]:
 @mcp.tool()
 def get_runbook(ctx: Context, name: str) -> str:
     """Return the full text of one runbook."""
-    guard(ctx, "get_runbook")
+    guard(ctx, "get_runbook", resource=f"runbook:{name}", name=name)
     # Resolve and confirm containment: `name` arrives from model output and
     # '../../etc/passwd' is exactly the shape of thing that turns up there.
     target = (RUNBOOKS / f"{name}.md").resolve()

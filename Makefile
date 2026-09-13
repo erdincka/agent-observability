@@ -13,6 +13,8 @@ ROUTE       ?= local
 PRINCIPAL   ?= oncall-engineer
 AGENT_ROLE  ?= reader
 KEY_PROFILE ?= per-agent
+# Chapter 8: SDK content capture on for one run, to show redaction working.
+CAPTURE     ?= false
 APP_NS      := agent-obs-app
 COLLECTOR_CHART_VERSION := 0.172.1
 OPENLIT_CHART_VERSION   := 1.24.0
@@ -91,6 +93,7 @@ secrets: env-check ## Render .env into Kubernetes Secrets (never committed)
 		--from-literal=CLICKHOUSE_USER="$$CLICKHOUSE_USER" \
 		--from-literal=CLICKHOUSE_PASSWORD="$$CLICKHOUSE_PASSWORD" \
 		--from-literal=CLICKHOUSE_DB="$$CLICKHOUSE_DB" \
+		--from-literal=CLICKHOUSE_RESTRICTED_PASSWORD="$$CLICKHOUSE_RESTRICTED_PASSWORD" \
 		--dry-run=client -o yaml | kubectl apply -f -
 	@set -a; . ./.env; set +a; \
 	kubectl create secret generic litellm-auth \
@@ -115,12 +118,12 @@ secrets: env-check ## Render .env into Kubernetes Secrets (never committed)
 		--dry-run=client -o yaml | kubectl apply -f -
 
 .PHONY: clickhouse
-clickhouse: ## Deploy ClickHouse (hot store)
+clickhouse: minio-secret ## Deploy ClickHouse (hot store, with the S3 cold disk)
 	kubectl apply -f deploy/10-clickhouse/clickhouse.yaml
 	kubectl rollout status statefulset/clickhouse -n $(PLATFORM_NS) --timeout=300s
 
 .PHONY: collector
-collector: ## Deploy the OpenTelemetry Collector
+collector: minio-secret ## Deploy the OpenTelemetry Collector
 	helm upgrade --install otel-collector \
 		open-telemetry/opentelemetry-collector \
 		--version $(COLLECTOR_CHART_VERSION) \
@@ -246,7 +249,7 @@ workflow-triage: ## Run the triage workflow (INCIDENT=, ROUTE=)
 	-kubectl delete job workflow-triage -n $(APP_NS) --ignore-not-found
 	sed -e 's|__INCIDENT__|$(INCIDENT)|' -e 's|__ROUTE__|$(ROUTE)|' \
 		-e 's|__PRINCIPAL__|$(PRINCIPAL)|' -e 's|__AGENT_ROLE_UPPER__|$(shell echo $(AGENT_ROLE) | tr a-z A-Z)|' \
-		-e 's|__AGENT_ROLE__|$(AGENT_ROLE)|' -e 's|__KEY_PROFILE__|$(KEY_PROFILE)|' \
+		-e 's|__AGENT_ROLE__|$(AGENT_ROLE)|' -e 's|__KEY_PROFILE__|$(KEY_PROFILE)|' -e 's|__CAPTURE__|$(CAPTURE)|' \
 		-e 's|__WORKFLOW_TAG__|$(WORKFLOW_TAG)|g' -e 's|__PULL_POLICY__|$(call pull_policy,$(WORKFLOW_TAG))|g' \
 		deploy/70-workflow/triage-job.yaml | kubectl apply -f -
 	kubectl wait --for=condition=complete job/workflow-triage -n $(APP_NS) --timeout=900s
@@ -291,6 +294,65 @@ mcp: secrets ## Deploy the four MCP tool servers and the role->tool policy
 	kubectl rollout status deployment/mcp-changes  -n $(APP_NS) --timeout=300s
 	kubectl rollout status deployment/mcp-runbooks -n $(APP_NS) --timeout=300s
 	kubectl rollout status deployment/mcp-ops      -n $(APP_NS) --timeout=300s
+
+# ------------------------------------------------------------ chapter 8 ------
+
+.PHONY: ch-restricted-user
+# A reader that can SELECT from the restricted database and nothing else. The
+# password comes from .env (CLICKHOUSE_RESTRICTED_PASSWORD); the statement is
+# idempotent. `make demo-restricted-access` proves the scope both ways.
+ch-restricted-user: env-check ## Create the restricted-store reader in ClickHouse (chapter 8)
+	@set -a; . ./.env; set +a; \
+	kubectl exec -i -n $(PLATFORM_NS) clickhouse-0 -- \
+		clickhouse-client --user "$$CLICKHOUSE_USER" --password "$$CLICKHOUSE_PASSWORD" --multiquery --query \
+		"CREATE DATABASE IF NOT EXISTS otel_restricted; \
+		 CREATE USER IF NOT EXISTS restricted_reader IDENTIFIED WITH sha256_password BY '$$CLICKHOUSE_RESTRICTED_PASSWORD'; \
+		 GRANT SELECT ON otel_restricted.* TO restricted_reader; \
+		 REVOKE SELECT ON otel.* FROM restricted_reader;"
+	@echo "restricted_reader: SELECT on otel_restricted.* only"
+
+.PHONY: retention
+# Switches the hot table to the tiered policy and sets the retention TTL:
+# parts move to the S3 volume after a day and are deleted after seven years.
+# The exporter's own 30-day DELETE TTL is replaced, not extended: the archive
+# in MinIO is the long-horizon copy, and the cold volume is what ClickHouse
+# still queries. Idempotent.
+retention: ## Put otel_traces on the tiered storage policy with a 7-year TTL (chapter 8)
+	$(MAKE) -s ch-query Q="ALTER TABLE otel.otel_traces MODIFY SETTING storage_policy='tiered'"
+	$(MAKE) -s ch-query Q="ALTER TABLE otel.otel_traces MODIFY TTL toDateTime(Timestamp) + toIntervalDay(1) TO VOLUME 'cold', toDateTime(Timestamp) + toIntervalYear(7) DELETE"
+	$(MAKE) -s ch-query Q="SELECT name AS table, storage_policy FROM system.tables WHERE database='otel' AND name='otel_traces'"
+
+.PHONY: retention-status
+retention-status: ## Where each partition of otel_traces lives (hot disk or S3), and what the archive holds
+	@echo "--- otel_traces parts by disk ---"
+	@$(MAKE) -s ch-query Q="SELECT partition, disk_name, count() AS parts, formatReadableSize(sum(bytes_on_disk)) AS size, sum(rows) AS rows FROM system.parts WHERE database='otel' AND table='otel_traces' AND active GROUP BY partition, disk_name ORDER BY partition FORMAT PrettyCompact"
+	@echo "--- objects in MinIO ---"
+	@./deploy/05-minio/list-buckets.sh otel-archive clickhouse-cold
+
+.PHONY: retention-move-oldest
+retention-move-oldest: ## Move the oldest hot partition of otel_traces to the S3 volume now (what the TTL does nightly)
+	@p=$$($(MAKE) -s ch-query Q="SELECT min(partition) FROM system.parts WHERE database='otel' AND table='otel_traces' AND active AND disk_name='default'"); \
+	echo "moving partition $$p to volume cold"; \
+	$(MAKE) -s ch-query Q="ALTER TABLE otel.otel_traces MOVE PARTITION '$$p' TO VOLUME 'cold'"; \
+	$(MAKE) -s ch-query Q="SELECT partition, disk_name, rows FROM system.parts WHERE database='otel' AND table='otel_traces' AND active AND partition='$$p' FORMAT PrettyCompact"
+
+.PHONY: demo-content-redacted
+# The honest version of the no-content claim: emit content on purpose, prove
+# it never lands. The run's spans carry redaction.masked.keys instead.
+demo-content-redacted: ## Turn SDK content capture ON for one run and prove the Collector strips it before storage
+	$(MAKE) workflow-triage CAPTURE=true
+	@./scripts/content-check.sh "$$(kubectl logs -n $(APP_NS) job/workflow-triage | sed -n 's/^=== run \([0-9a-f]*\) .*/\1/p')"
+
+.PHONY: demo-restricted-access
+demo-restricted-access: env-check ## The restricted reader can read otel_restricted and is refused on otel
+	@set -a; . ./.env; set +a; \
+	echo -n "restricted_reader on otel_restricted.otel_traces: "; \
+	kubectl exec -i -n $(PLATFORM_NS) clickhouse-0 -- clickhouse-client --user restricted_reader --password "$$CLICKHOUSE_RESTRICTED_PASSWORD" \
+		--query "SELECT count() AS flagged_spans FROM otel_restricted.otel_traces" ; \
+	echo -n "restricted_reader on otel.otel_traces: "; \
+	out=$$(kubectl exec -i -n $(PLATFORM_NS) clickhouse-0 -- clickhouse-client --user restricted_reader --password "$$CLICKHOUSE_RESTRICTED_PASSWORD" \
+		--query "SELECT count() FROM otel.otel_traces" 2>&1); \
+	case "$$out" in *ACCESS_DENIED*|*"Not enough privileges"*) echo "refused (ACCESS_DENIED) — as intended";; *) echo "UNEXPECTED: $$out"; exit 1;; esac
 
 .PHONY: netpol
 netpol: ## Apply the NetworkPolicies that make the gateway unbypassable (chapter 7)

@@ -57,6 +57,9 @@ spec:
             # `per-agent`, or the name of a demo key (restricted, throttled)
             # that every agent then uses.
             - { name: KEY_PROFILE, value: "__KEY_PROFILE__" }
+            # Chapter 8: "true" makes the SDK emit content, so the Collector's
+            # redaction can be shown doing its job. Default false.
+            - { name: OPENLIT_CAPTURE_CONTENT, value: "__CAPTURE__" }
 
             # Drives the LangGraph checkpointer. CNPG publishes `uri` as a
             # ready-made connection string, so the workflow and the database

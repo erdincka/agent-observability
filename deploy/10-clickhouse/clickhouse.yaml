@@ -29,6 +29,43 @@ data:
       </logger>
       <!-- Lab instance: no distributed coordination, keep it quiet. -->
       <listen_host>0.0.0.0</listen_host>
+
+      <!-- Chapter 8: the retention tier. A second disk backed by MinIO's
+           clickhouse-cold bucket, and a policy whose first volume keeps the name `default` (ClickHouse requires the
+           new policy to contain the old policy's volumes) on local disk and a
+           cold volume (S3). `make retention` switches otel_traces to this
+           policy and sets a TTL that moves parts to cold after a day and
+           deletes after seven years. Credentials from the scoped MinIO user in
+           Secret minio-auth, via the environment; never in this file. -->
+      <storage_configuration>
+        <disks>
+          <s3_cold>
+            <type>s3</type>
+            <endpoint from_env="CLICKHOUSE_S3_COLD_ENDPOINT"/>
+            <access_key_id from_env="AWS_ACCESS_KEY_ID"/>
+            <secret_access_key from_env="AWS_SECRET_ACCESS_KEY"/>
+            <metadata_path>/var/lib/clickhouse/disks/s3_cold/</metadata_path>
+          </s3_cold>
+        </disks>
+        <policies>
+          <tiered>
+            <volumes>
+              <default><disk>default</disk></default>
+              <cold><disk>s3_cold</disk></cold>
+            </volumes>
+          </tiered>
+        </policies>
+      </storage_configuration>
+    </clickhouse>
+  # users.d: lets the default (admin) user manage users over SQL, so
+  # `make ch-restricted-user` can create the restricted reader (chapter 8).
+  access.xml: |
+    <clickhouse>
+      <users>
+        <default>
+          <access_management>1</access_management>
+        </default>
+      </users>
     </clickhouse>
 ---
 apiVersion: v1
@@ -75,11 +112,22 @@ spec:
               valueFrom: { secretKeyRef: { name: clickhouse-auth, key: CLICKHOUSE_PASSWORD } }
             - name: CLICKHOUSE_DB
               valueFrom: { secretKeyRef: { name: clickhouse-auth, key: CLICKHOUSE_DB } }
+            # Chapter 8: the S3 disk. Scoped MinIO credential from minio-auth;
+            # the endpoint composed from the Secret's S3_ENDPOINT plus the
+            # bucket, since the disk config wants one URL.
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom: { secretKeyRef: { name: minio-auth, key: AWS_ACCESS_KEY_ID } }
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom: { secretKeyRef: { name: minio-auth, key: AWS_SECRET_ACCESS_KEY } }
+            - name: S3_ENDPOINT
+              valueFrom: { secretKeyRef: { name: minio-auth, key: S3_ENDPOINT } }
+            - { name: CLICKHOUSE_S3_COLD_ENDPOINT, value: "$(S3_ENDPOINT)/clickhouse-cold/" }
             - name: CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT
               value: "1"
           volumeMounts:
             - { name: data,   mountPath: /var/lib/clickhouse }
-            - { name: config, mountPath: /etc/clickhouse-server/config.d }
+            - { name: config, mountPath: /etc/clickhouse-server/config.d/custom.xml, subPath: custom.xml }
+            - { name: config, mountPath: /etc/clickhouse-server/users.d/access.xml, subPath: access.xml }
           resources:
             requests: { cpu: "1",  memory: 2Gi }
             limits:   { cpu: "6",  memory: 12Gi }

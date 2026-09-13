@@ -651,6 +651,39 @@ half of an auditable guardrail.
 possibly mapping a bare `Exception` from a guardrail hook to `guardrail_failed_to_respond`
 rather than a 500.
 
+### 13. LiteLLM — a guardrail's success record puts the full request on the span, bypassing `no_content`
+
+**Project:** [BerriAI/litellm](https://github.com/BerriAI/litellm) (v1.100.0, OTel v2)
+**Status:** Found 2026-09-13 by measuring what lands in the store with content capture on. Not filed.
+The most consequential finding in this project.
+
+With `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=no_content` and a pre-call
+guardrail configured, every `execute_guardrail <name>` span carries
+`litellm.guardrail.response` containing the request data the guardrail returned —
+`messages` included. On a run with a 4832-character prompt the attribute was 29947
+characters long. Nineteen gateway spans in this lab's store held prompt text before it
+was noticed.
+
+The mechanism: `CustomGuardrail._process_response` records the hook's return value as
+`guardrail_json_response`, and a pre-call hook returns `data`, the whole request. OTel v2's
+`payloads.py` then builds the guardrail span from `standard_logging_guardrail_information`
+and stamps that value as `litellm.guardrail.response`. Nothing on that path consults the
+content-capture setting.
+
+**Why it matters:** the gateway is the control point whose `no_content` posture an
+operator verifies. Enabling a guardrail — the feature whose purpose is policy — silently
+turns the gateway into a content emitter. An operator who enabled guardrails to
+*strengthen* governance would have weakened it, and the only visible sign is an attribute
+length.
+
+**What we did instead:** a Collector redaction rule masks `litellm.guardrail.response` on
+the only write path; rows already stored were masked in place with `ALTER TABLE ... UPDATE`.
+
+**Contribution type:** bug report, and a code change of one of two shapes: honour the
+content-capture setting when building the guardrail span (omit or truncate the response
+under `no_content`), or record the hook's *verdict* rather than its return value for
+pre-call hooks, since "allow" carries the information and the payload does not.
+
 ## Watch list
 
 Carried from the project brief. These are suspected gaps to verify, not findings. Status column updated
