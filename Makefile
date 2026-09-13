@@ -252,6 +252,11 @@ mcp: ## Deploy the three MCP tool servers
 mcp-probe: ## List the tools each MCP server exposes
 	./scripts/mcp-probe.sh
 
+.PHONY: mcp-degrade-test
+mcp-degrade-test: ## Prove one unreachable tool server degrades a run instead of aborting it
+	./scripts/require-image.sh workflow
+	./scripts/mcp-degrade-test.sh
+
 .PHONY: step5
 step5: mcp-image mcp mcp-probe ## Everything in step 5
 

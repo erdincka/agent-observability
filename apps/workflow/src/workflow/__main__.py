@@ -98,10 +98,14 @@ async def _run(args: argparse.Namespace) -> int:
 
         # Measured here rather than derived from the trace later, so the numbers
         # the run reports and the numbers the spans report can be compared.
-        span.set_attribute("triage.evidence_items", len(result["evidence"]))
+        # An "ERROR: no MCP tool server reachable" string is an evidence item
+        # by position and not by content; counting its prefix as a domain made
+        # a run with zero evidence report one domain covered.
+        real = [item for item in result["evidence"] if not item.startswith("ERROR:")]
+        span.set_attribute("triage.evidence_items", len(real))
         span.set_attribute(
             "triage.domains_covered",
-            len({item.split("/", 1)[0] for item in result["evidence"]}),
+            len({item.split("/", 1)[0] for item in real}),
         )
 
     # Printed in full because the run's value is the handoff, not just the last

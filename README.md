@@ -1,18 +1,60 @@
 # Enterprise Agent Observability & Governance Lab
 
-A self-hosted lab for tracing what AI agents actually do. A small multi-agent workflow,
-three MCP tool servers and a model gateway, instrumented end to end with the OpenTelemetry
-GenAI semantic conventions, running on Kubernetes.
+A self-hosted playground and a guide. A small multi-agent workflow, three MCP tool servers
+and a model gateway, instrumented end to end with the OpenTelemetry GenAI semantic
+conventions on Kubernetes, built to work out one pattern: how an enterprise that cannot
+store prompt content can still see, govern and audit what its agents do.
 
-The question this lab exists to answer is whether an agent platform can produce
-**audit-grade traces without recording prompt or completion content**: what did the agent
-do, on whose behalf, with what data access, and can you prove it later? Regulated
-organisations often cannot store content, and still have to answer all four.
+It is written for practitioners who will run it themselves. Every chapter of the
+[guide](docs/guide/README.md) is one experiment: the question, what to run, what to look
+at, what you should see, what it means, and where the tooling falls short. The findings
+and the upstream gaps are the product. The workflow is the specimen.
 
-**Status: phase 1**, telemetry flowing end to end. Governance (phase 2) and dashboards
-(phase 3) have not started. [LEARNINGS.md](LEARNINGS.md) is the running record of what was
-built, why, and what broke; [CONTRIBUTIONS.md](CONTRIBUTIONS.md) logs the upstream gaps it
-found; [TODO.md](TODO.md) is deferred work.
+## Why this exists
+
+<!-- TODO(human): the thesis, in your own words. See the "Learn by Doing" note in the
+     session that created this file. Five to ten lines: who cannot log content and why,
+     what they still have to answer, what the spec leaves to them, and what this lab
+     sets out to show. This is the paragraph only you can write credibly. -->
+
+## The four questions, and the claim
+
+Regulated organisations often cannot store prompt or completion content, and still have
+to answer, months later:
+
+1. **What did the agent do?**
+2. **On whose behalf?**
+3. **With what data access?**
+4. **Can you prove it later?**
+
+The claim under test is that a platform can produce **audit-grade agent traces without
+recording the content**. The [governance matrix](docs/governance-matrix.md) tracks each
+question against the control that answers it, the evidence in the stored trace, and where
+the answer is still "no".
+
+## Where it stands
+
+**Phase 1, "make it observable", is done.** A complete trace spans agent → MCP tool →
+gateway → model, the layers reconcile with each other, and the images rebuild from the
+repository. **Phase 2, "make it governable", has not started**: no identity, budgets,
+authorization, redaction, routing, sampling or retention. Of the four questions, only the
+first is largely answerable today. That is the expected shape at the end of phase 1, and
+the matrix says so row by row.
+
+The commands assume [this lab's environment](docs/lab-environment.md), a three-node k3s
+cluster with a few pre-existing pieces. A single-machine path is the next infrastructure
+work, so that a reader can run the guide without a cluster.
+
+## How to use this repository
+
+| If you want to | Go to |
+| :- | :- |
+| Understand the stack and how the pieces relate | [Chapter 0](docs/guide/00-the-stack.md) |
+| Run the experiments in order | [The guide](docs/guide/README.md) |
+| Check a deployment against the four questions | [Governance matrix](docs/governance-matrix.md) |
+| See what was found in the upstream tools | [CONTRIBUTIONS.md](CONTRIBUTIONS.md) |
+| Read what happened, in order, failures included | [LEARNINGS.md](LEARNINGS.md) |
+| Build it on this lab | [Lab environment](docs/lab-environment.md) and `make help` |
 
 ## What this deliberately is not
 
@@ -24,10 +66,11 @@ found; [TODO.md](TODO.md) is deferred work.
   and access control, not confinement.
 - **Not airtight.** Reasonably secure and fully auditable, not hardened against a determined
   adversary.
-- **Not governed yet.** No virtual keys, budgets, guardrails, redaction or tail sampling:
-  those are phase 2.
+- **Not a production observability platform.** Single-node ClickHouse, node-pinned volumes,
+  a lab's worth of hygiene. Where that would not do in an enterprise, the guide says so.
 - **No Tempo, Grafana or LangFlow**, by choice. ClickHouse is the trace store, OpenLIT the
-  phase 1 UI, and Perses is planned for dashboards.
+  phase 1 UI, and Perses is planned for dashboards. MLflow is deferred to an optional
+  evaluation chapter.
 
 ## Architecture
 
@@ -64,24 +107,29 @@ flowchart LR
   UI -- reads --> CH
 ```
 
+Two components are control points, and they do different jobs. **The gateway enforces at
+the boundary**, before a model call happens. **The Collector processes after the fact**,
+before anything is stored. Everything else produces or carries telemetry.
+
 The properties that matter, each established in LEARNINGS.md rather than assumed:
 
 - **The Collector is the only thing that writes to ClickHouse.** OpenLIT reads the same
-  `otel_traces` table, with its bundled ClickHouse and collector disabled. Phase 2 puts
-  redaction, routing and sampling in the Collector, which only works if the Collector owns
-  the write path.
+  `otel_traces` table, with its bundled ClickHouse and collector disabled. Redaction,
+  routing and sampling only work if the Collector owns the write path.
 - **Every model call goes through the gateway.** The workflow names a route (`local`,
   `remote`), never a model, so the gateway is the one place model access can be observed
   and, later, governed.
-- **Trace context crosses the agent → tool boundary** because the `mcp` 2.x SDK propagates
-  it over HTTP headers. MCP itself carries no trace context; a stdio transport would break
-  the trace without a warning.
-- **Content capture is off at every layer, explicitly.** The gateway runs with
-  `no_content`. The workflow and tool servers set `capture_message_content=False`, because
-  the OpenLIT SDK defaults it to `True`.
+- **Trace context crosses the agent → tool boundary** because the `mcp` 2.x SDK carries
+  W3C `traceparent` inside the JSON-RPC `_meta` field (SEP-414) on every request. It is a
+  property of the SDK, not the transport: stdio carries it too, and a client that does not
+  implement it drops the trail on any transport. The tool servers warn when that happens.
+- **Content capture is off at every layer, explicitly, and verified by probes** that grep
+  the stored attributes for the prompt text. The gateway runs with `no_content`. The
+  workflow and tool servers set `capture_message_content=False`, because the OpenLIT SDK
+  defaults it to `True`.
 - **Attribution is per agent.** Each agent node records its own token usage (reasoning
-  included), model-call count, finish reasons and an `ok` / `truncated` / `empty` outcome
-  on its own span.
+  included), model-call count, finish reasons and an `ok` / `truncated` / `empty` / `degraded`
+  outcome on its own span.
 
 ## Stack
 
@@ -99,44 +147,29 @@ The properties that matter, each established in LEARNINGS.md rather than assumed
 | Object storage | MinIO, standalone VM | RELEASE.2025-09-07T16-13-09Z |
 | Runtime | Python | 3.12.14 |
 
-Planned, not deployed: MLflow (phase 2), Perses (phase 3).
+Planned, not deployed: Perses (phase 3). Deferred: MLflow (optional evaluation chapter).
 
-## Prerequisites
-
-This repository builds the lab, not the cluster it runs on. It assumes:
-
-- **Kubernetes** on amd64 nodes with a default StorageClass (tested: k3s v1.36,
-  `local-path`).
-- **CloudNativePG operator** (tested: 1.30.0).
-- **Envoy Gateway** with a Gateway named `platform` in namespace `gateway`, listening on
-  `*.kube.local`. Used only to expose the OpenLIT and LiteLLM UIs.
-- **A container registry** the nodes can pull from (`10.1.1.240:5000` here).
-- **An amd64 Docker host** reachable as Docker context `pve`, for image builds. Building
-  on an arm64 workstation produces images that fail in the pod.
-- **Prometheus** in the `observability` namespace, queried by the metrics tool server.
-- **Optionally, a Proxmox VE host** with cloud-init template VM 9000, for `make minio`.
-- Local tools: `kubectl`, `helm`, `uv`, `docker`, `python3`, `ssh`.
-
-## Building it
+## Running it
 
 ```bash
-cp .env.example .env          # every value has a working default except optional external keys
-make minio                    # optional: MinIO VM on the Proxmox host
-make step1                    # namespaces, secrets, ClickHouse, Collector, smoke trace
-make step2                    # OpenLIT UI
-make step3                    # Ollama and model pull, LiteLLM gateway and its database
-make postgres                 # the workflow's state
-make step5                    # build the MCP image, deploy the three tool servers, probe them
-make workflow-image           # build the workflow image
-make workflow-probe           # one-node plumbing proof
-make workflow-triage          # a real run; INCIDENT= and ROUTE=local|remote override
+cp .env.example .env     # every value has a working default except optional external keys
+make step1               # namespaces, secrets, ClickHouse, Collector, smoke trace
+make step2               # OpenLIT UI
+make step3               # Ollama and model pull, LiteLLM gateway and its database
+make postgres            # the workflow's state
+make step5               # build the MCP image, deploy the three tool servers, probe them
+make workflow-image
+make workflow-probe      # one-node plumbing proof
+make workflow-triage     # a real run; INCIDENT= and ROUTE=local|remote override
 ```
 
-`make help` lists every target. [deploy/README.md](deploy/README.md) covers deployment
-order and reaching the UIs. Add `openlit.kube.local` and `litellm.kube.local` to your hosts
-file, pointing at the Gateway's address.
+Prerequisites, what is lab-specific, and how the UIs are reached:
+[docs/lab-environment.md](docs/lab-environment.md). Deployment order and why it is
+load-bearing: [deploy/README.md](deploy/README.md).
 
 ## Checking it
+
+Each probe isolates one layer, so "which layer is it?" is answered in minutes.
 
 | Command | Answers |
 | :- | :- |
@@ -154,26 +187,18 @@ WHERE TraceId = '<trace id>' AND ParentSpanId != ''
   AND ParentSpanId NOT IN (SELECT SpanId FROM otel_traces WHERE TraceId = '<trace id>')
 ```
 
-## Reproducibility
-
-Rebuilding a commit reproduces its images:
-
-- Python dependencies install `--frozen` from `apps/*/uv.lock`, and base images are pinned
-  by digest. Third-party images are pinned by version.
-- An image tag is the last commit that touched that image's inputs. A clean tag is built
-  once and never rebuilt, so a tag names exactly one image. Uncommitted inputs produce a
-  `-dirty` tag, which rebuilds and is pulled every time.
-- Credentials live only in the gitignored `.env`, rendered into Kubernetes Secrets by
-  `make secrets`.
-
 ## Layout
 
 ```
-deploy/        numbered manifests and Helm values; the numbering is the deployment order
-apps/workflow  the LangGraph triage workflow
-apps/mcp       the three MCP tool servers (one image, three Deployments)
-scripts/       build, tagging, probes and the drift check
-docs/runbooks  the documents the runbooks tool server searches
+docs/guide/     the guide, one experiment per chapter, in reading order
+docs/           governance matrix, this lab's environment, the runbooks the tool server searches
+deploy/         numbered manifests and Helm values; the numbering is the deployment order
+apps/workflow   the LangGraph triage workflow
+apps/mcp        the three MCP tool servers (one image, three Deployments)
+scripts/        build, tagging, probes and the drift check
+LEARNINGS.md    the chronological log, failures kept in
+CONTRIBUTIONS.md  upstream gaps, and what was filed
+TODO.md         deferred work
 ```
 
 ## Licence

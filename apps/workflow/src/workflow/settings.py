@@ -38,6 +38,9 @@ class Settings:
 
     service_domain: str = os.getenv("SERVICE_DOMAIN", "agent-obs-app.svc.cluster.local")
     mcp_port: int = int(os.getenv("MCP_PORT", "8080"))
+    # Seconds to connect to a tool server and complete its handshake. A server
+    # that black-holes must degrade the run, not hang it (TODO item 1).
+    mcp_connect_timeout: float = float(os.getenv("MCP_CONNECT_TIMEOUT", "10"))
 
     # How many model → tool → model rounds the retriever may take before it is
     # cut off. A 3B model will happily loop; this bounds the run without

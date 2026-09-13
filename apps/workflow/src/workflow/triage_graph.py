@@ -119,6 +119,12 @@ class _Usage:
     # Replies with no text AND no tool calls. A tool-call reply legitimately has
     # empty content, so it does not count.
     empty_outputs: int = 0
+    # Set by the node when its evidence gathering was cut short for a reason
+    # that is not the model's doing: no tool server reachable, some
+    # unreachable, or the round cap. Recorded because the closing review found
+    # the worst failures carried no outcome at all — the no-tools early exit
+    # stamped nothing, and the round-cap exit stamped `ok`.
+    degraded: str = ""
 
     def add(self, reply: BaseMessage) -> None:
         self.calls += 1
@@ -150,16 +156,22 @@ class _Usage:
 
             truncated  a reply hit the token cap; its text is partial reasoning
             empty      a reply ended normally with no text and no tool call
-            ok         neither
+            degraded   the node finished, but on less than it should have had:
+                       a tool server unreachable, or the round cap reached
+            ok         none of the above
 
         Precedence is worst-first, so a node that was both reports `truncated`.
         Hard failures are not an outcome here: they raise, and the span records
-        the exception status on its own.
+        the exception status on its own. `degraded` is the outcome chapter 7
+        needs: a tool the agent was not allowed to use must look like this,
+        not like a crash.
         """
         if "length" in self.finish_reasons:
             return "truncated"
         if self.empty_outputs:
             return "empty"
+        if self.degraded:
+            return "degraded"
         return "ok"
 
     def stamp(self, span: trace.Span, node: str) -> None:
@@ -178,24 +190,41 @@ class _Usage:
         context is not a safe place to look up an attribution target while a third
         party is mutating it.
 
-        Uses the semconv `gen_ai.usage.*` names because an `invoke_agent` span is
-        a GenAI span and the conventions allow usage on it. The consequence to
-        know: summing `gen_ai.usage.input_tokens` across *all* spans in a trace
-        now double-counts, because the gateway reports the same tokens. Aggregate
-        with a `gen_ai.operation.name` filter — which is how you would slice it
-        per agent anyway.
+        Uses the GenAI semantic conventions where they have a name for the
+        thing, so the span is a real `invoke_agent` span and not a private
+        vocabulary:
 
-        `gen_ai.usage.reasoning_tokens` is not a semantic convention. There is no
-        standard attribute for it yet; this is the obvious name in the existing
-        namespace, and it is flagged here so it is a known local extension rather
-        than something later mistaken for spec.
+            gen_ai.operation.name = invoke_agent    what kind of span this is
+            gen_ai.agent.name     = <node>          which agent
+            gen_ai.usage.input_tokens / output_tokens
+            gen_ai.usage.reasoning.output_tokens    since semconv v1.41.0
+                                                    (2026-04-28), status
+                                                    Development. An earlier
+                                                    version of this method used
+                                                    a local name and said no
+                                                    standard existed; it did.
+
+        The consequence to know: summing `gen_ai.usage.input_tokens` across
+        *all* spans in a trace double-counts, because the gateway reports the
+        same tokens. Aggregate with `gen_ai.operation.name = 'invoke_agent'`,
+        which selects exactly these spans: OpenLIT's own `invoke_agent` spans
+        carry no usage keys, so the filter sums the per-agent figures and
+        nothing else. Verified on run `e55d79a95f25`: 10757 + 1500 + 575 equals
+        the gateway's input total over the same run.
+
+        `triage.*` is the local vocabulary for what the conventions have no
+        name for: call count, finish reasons, the outcome, and why it degraded.
         """
+        span.set_attribute("gen_ai.operation.name", "invoke_agent")
+        span.set_attribute("gen_ai.agent.name", node)
         span.set_attribute("gen_ai.usage.input_tokens", self.input_tokens)
         span.set_attribute("gen_ai.usage.output_tokens", self.output_tokens)
-        span.set_attribute("gen_ai.usage.reasoning_tokens", self.reasoning_tokens)
+        span.set_attribute("gen_ai.usage.reasoning.output_tokens", self.reasoning_tokens)
         # The route, not the model. The workflow is never told which model served
         # it; only the gateway knows that (`litellm.provider.model`).
         span.set_attribute("gen_ai.request.model", settings.model_route)
+        # Kept alongside gen_ai.agent.name so queries written against phase 1
+        # runs still work. Same value.
         span.set_attribute("triage.agent", node)
         # "Was it repeated" — one call for the analyser and reporter by
         # construction, one per round for the retriever.
@@ -203,12 +232,16 @@ class _Usage:
         span.set_attribute("triage.finish_reasons", self.finish_reasons)
         span.set_attribute("triage.truncated", "length" in self.finish_reasons)
         span.set_attribute("triage.empty_outputs", self.empty_outputs)
+        if self.degraded:
+            span.set_attribute("triage.degraded_reason", self.degraded)
         span.set_attribute("triage.outcome", self.outcome)
         if self.outcome != "ok":
             log.warning(
-                "%s outcome=%s (finish_reasons=%s, empty_outputs=%d) — its output "
-                "is not a usable answer, and the next node will receive it anyway",
+                "%s outcome=%s (finish_reasons=%s, empty_outputs=%d, degraded=%r) "
+                "— its output is not a usable answer, and the next node will "
+                "receive it anyway",
                 node, self.outcome, self.finish_reasons, self.empty_outputs,
+                self.degraded,
             )
 
 
@@ -375,9 +408,20 @@ async def _retriever(state: TriageState) -> dict[str, Any]:
 
 
 async def _retrieve(state: TriageState, span: trace.Span) -> dict[str, Any]:
+    usage = _Usage()
     async with tool_belt() as belt:
+        if belt.unreachable:
+            # Which servers, on the span, so a query can find runs that ran on
+            # partial evidence. The names only; the error text is in the logs.
+            span.set_attribute("triage.unreachable_servers", sorted(belt.unreachable))
+            usage.degraded = "unreachable:" + ",".join(sorted(belt.unreachable))
+
         if not belt.specs:
+            # Every exit stamps. This one used to return before stamping, so
+            # the run's worst failure was the one span with no outcome.
             log.error("no tools reachable — retriever has nothing to call")
+            usage.degraded = "no_tools"
+            usage.stamp(span, "retriever")
             return {
                 "evidence": [
                     f"ERROR: no MCP tool server reachable ({belt.unreachable})"
@@ -390,7 +434,6 @@ async def _retrieve(state: TriageState, span: trace.Span) -> dict[str, Any]:
             HumanMessage(f"Incident to investigate:\n\n{state['incident']}"),
         ]
         evidence: list[str] = []
-        usage = _Usage()
 
         for round_no in range(1, settings.max_tool_rounds + 1):
             reply: AIMessage = await model.ainvoke(messages)
@@ -410,7 +453,10 @@ async def _retrieve(state: TriageState, span: trace.Span) -> dict[str, Any]:
                 )
                 messages.append(ToolMessage(content=result, tool_call_id=call["id"]))
         else:
+            # Evidence gathering was cut off by us, not finished by the model.
+            # Stamping `ok` here was the other outcome gap the review found.
             log.warning("retriever hit the %d-round cap", settings.max_tool_rounds)
+            usage.degraded = (usage.degraded + ";" if usage.degraded else "") + "round_cap"
 
         usage.stamp(span, "retriever")
         log.info(

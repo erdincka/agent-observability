@@ -1,8 +1,8 @@
 """Shared server construction for the three MCP tool servers.
 
-Scaffolding. The one interesting thing it does is call `extract_context` from
-`propagation.py` defensively, so the servers run today with that function still
-unimplemented and light up the moment it exists.
+Scaffolding. The one thing of interest is `join_caller_trace`, which no longer
+joins anything — the `mcp` SDK does that — and instead reports when a tool
+call arrives without trace context. See `propagation.py` for the record.
 """
 
 import logging
@@ -37,35 +37,25 @@ def serve(mcp: MCPServer) -> None:
 
 
 def join_caller_trace(ctx: Context) -> None:
-    """Best-effort attach of the caller's trace context.
+    """Report, once, if a tool call arrived with no trace context.
 
-    Deliberately non-fatal while `propagation.extract_context` is unimplemented:
-    the servers are useful before the bridge exists, and a hard failure here
-    would make it impossible to run the experiment that determines what the
-    bridge should do.
-
-    Once implemented, this is the seam where a tool span becomes a child of the
-    calling agent's span rather than the root of an orphan trace.
+    Historical name. This used to call a propagation stub; the `mcp` 2.x SDK
+    turned out to extract `traceparent` and parent the tool span itself, so
+    there is nothing to join (see `propagation.py`). What is worth keeping is
+    the inverse check: every call from an SEP-414-aware client carries context
+    in `_meta`, so a tool span with no remote parent is a broken audit trail —
+    a client that does not propagate, or a proxy that rewrote the request.
+    Warn on the first one; the span itself, a root with no parent, is the
+    durable evidence. Transport-agnostic: `_meta` travels over stdio too.
     """
     global _warned
-    # mcp 2.x exposes the request headers directly on Context. Under stdio there
-    # are none, which is the whole reason these servers speak HTTP.
-    try:
-        headers = dict(ctx.headers or {})
-    except Exception:  # noqa: BLE001 - never let telemetry plumbing break a tool
-        headers = {}
-
-    try:
-        propagation.extract_context(headers)
-    except NotImplementedError:
-        if not _warned:
-            _warned = True
-            log.warning(
-                "trace context bridge not implemented — tool spans may start a "
-                "new trace instead of joining the caller's. "
-                "traceparent present on this request: %s",
-                "traceparent" in {k.lower() for k in headers},
-            )
+    if not propagation.caller_trace_present() and not _warned:
+        _warned = True
+        log.warning(
+            "tool call arrived without trace context — its span is a root, not "
+            "a child of the calling agent. The client did not inject "
+            "traceparent into _meta (SEP-414); see propagation.py."
+        )
 
 
 def tool_result(payload: Any) -> Any:
