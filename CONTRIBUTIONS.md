@@ -85,7 +85,30 @@ choice is documented in the plugin's data model docs and highlighted for the rev
 Pushed as a second commit, `9e8b7c99`, rather than an amended one, so the reviewer sees only what changed. All 17
 CI-equivalent checks pass on it, and the dashboards render identically.
 
-**Next step:** wait for the next review round — the time-bound decision above is the likeliest thing to change.
+**Review round two, 2026-09-18/19 — Copilot's five comments.** Verified each against the code and the exporter's
+source before answering; three were fixed in one commit (`86494480`), two were put to the maintainers.
+
+- *Fixed.* The shared ClickHouse client appends `FORMAT JSON` only when the query does not contain the substring
+  `FORMAT`, so a search using `formatDateTime(...)` got TabSeparated back and `response.json()` threw. Both generated
+  queries now end with an explicit `FORMAT JSON`. Proven through the Perses proxy: the same query answers
+  `text/tab-separated-values` without it and `application/json` with it. The same substring check affects the
+  existing log and time series queries; offered upstream as a separate fix.
+- *Fixed.* The exporter's `json: true` schema stores typed attribute values, which were all wrapped in `stringValue`.
+  Values are now mapped to the matching OTLP type — and a finding the review had not made: ClickHouse's JSON type
+  turns the dots of attribute names into nesting (`http.response.status_code` comes back as
+  `{http: {response: {status_code: 200}}}`), which the plugin now flattens back. Verified against a table created
+  verbatim from the exporter's `traces_json_table.sql`, rendered in the Gantt pane with the original names.
+- *Fixed.* An empty service name and a service named `unknown` share a key in the search summary, and the second
+  assignment overwrote the first — a regression from the round-one rewrite. Counts are added now.
+- *Put to the maintainers.* The JSON schema has no `TraceId` bloom filter, so the unbounded trace lookup can scan
+  every partition there; Copilot was wrong, though, that `<table>_trace_id_ts` only exists for the Map schema — both
+  exporter modes create it, so the only case without it is a custom table or view. Proposed bounding the lookup
+  by default with an opt-out.
+- *Put to the maintainers.* The CUE selector accepts `datasource: "$var"` but the plugin passes it through unresolved.
+  True, and identical in the two existing ClickHouse queries; proposed fixing all three together in a follow-up.
+
+**Next step:** wait for the maintainers' answers on the lookup bound and the variable datasource, then the next
+review round.
 
 **Used in this lab, 2026-09-13.** The plugin archive is built from the PR commit inside this repository's
 Perses image (`apps/perses/Dockerfile`) and drives the audit dashboard's run tables and trace view over the
