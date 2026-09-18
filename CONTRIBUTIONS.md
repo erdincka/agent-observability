@@ -68,13 +68,31 @@ choice is documented in the plugin's data model docs and highlighted for the rev
   for example after following a Trace Table link to the same dashboard, because `TracingGanttChart` initialises
   both with `useState` and the panel doesn't key it by trace. Independent of the query plugin; left for later.
 
-**Next step:** answer the review, starting with the time-bound decision above. The PR is already out of draft;
-add screenshots to the description if they are not there yet.
+**Review round one, 2026-09-16/17.** Two comments from @jgbernalp, neither on the time-bound decision above.
+
+- *Can the limit be pushed into the query, instead of fetching everything and dropping the extra traces?* It can.
+  The search query is now used as a subquery, and ClickHouse does the grouping and the limit: one row per trace,
+  newest first, `LIMIT limit + 1`. Measured from `query_log` on the verification stack (48 traces, 168 spans): the
+  `limit: 20` panel fetches 21 rows instead of 168, and a single-service search 8 instead of 48. Start and end times
+  now arrive as nanoseconds, which also removes the "timestamps without a timezone are read as UTC" caveat. The cost,
+  documented in the plugin docs: all seven columns are required, the query must be a single `SELECT`, and one ending
+  in a `FORMAT` clause is rejected. Offered as two options in the thread; the reviewer chose this one over a
+  `{limit}` placeholder, because a user would not know which limit to write where.
+- *A query 16 or 32 characters long will run as a trace ID query.* It will not: the check is 16 or 32 **hexadecimal**
+  characters, which SQL cannot be — it always contains spaces or letters outside a-f. Pinned with a test for a
+  16-character query, and the comment now says "hexadecimal". Thread resolved by the reviewer.
+
+Pushed as a second commit, `9e8b7c99`, rather than an amended one, so the reviewer sees only what changed. All 17
+CI-equivalent checks pass on it, and the dashboards render identically.
+
+**Next step:** wait for the next review round — the time-bound decision above is the likeliest thing to change.
 
 **Used in this lab, 2026-09-13.** The plugin archive is built from the PR commit inside this repository's
 Perses image (`apps/perses/Dockerfile`) and drives the audit dashboard's run tables and trace view over the
 lab's own ClickHouse (guide chapter 10). One more data point for the reviewers: it works against a table with
-the exporter's schema, the identity attributes of chapters 6 and 7, and 180-span traces.
+the exporter's schema, the identity attributes of chapters 6 and 7, and 180-span traces. The pin stays at
+`2175f77f`, the commit before review round one, until the PR is merged — so the lab image does not move with
+the review, and the search there still groups spans in the browser.
 
 ### 2. OpenLIT — the ClickHouse schema contract with an existing Collector is undocumented
 
