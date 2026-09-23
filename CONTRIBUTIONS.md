@@ -113,9 +113,10 @@ review round.
 **Used in this lab, 2026-09-13.** The plugin archive is built from the PR commit inside this repository's
 Perses image (`apps/perses/Dockerfile`) and drives the audit dashboard's run tables and trace view over the
 lab's own ClickHouse (guide chapter 10). One more data point for the reviewers: it works against a table with
-the exporter's schema, the identity attributes of chapters 6 and 7, and 180-span traces. The pin stays at
-`2175f77f`, the commit before review round one, until the PR is merged — so the lab image does not move with
-the review, and the search there still groups spans in the browser.
+the exporter's schema, the identity attributes of chapters 6 and 7, and 180-span traces. The pin stayed at
+`2175f77f`, the pre-review commit, until 2026-09-23; with the PR parked awaiting maintainers, the lab moved to the
+PR head `86494480` (image `c345cd32d62c`). On the lab's data the runs panel now fetches 26 rows instead of 4,737
+span rows (LEARNINGS, 2026-09-23).
 
 ### 2. OpenLIT — the ClickHouse schema contract with an existing Collector is undocumented
 
