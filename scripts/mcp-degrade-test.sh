@@ -24,7 +24,16 @@ asyncio.run(main())
 run_case() {
   local label="$1" expect="$2"; shift 2
   echo "== $label"
+  # Runs with the workflow's network identity, deliberately. Chapter 7's
+  # mcp-ingress-from-workflow policy admits port 8080 only from pods labelled
+  # app.kubernetes.io/name=workflow, and governed-default-deny-egress is what
+  # permits DNS out. Without both labels this pod is refused by the policy —
+  # which is the policy working, but it makes the helper useless after `make
+  # netpol`. This client runs the workflow's own code, so borrowing the
+  # workflow's identity is honest rather than a loophole.
+
   kubectl run "belt-test-$$" -n "$NS" --rm -i --restart=Never --quiet \
+  --labels=app.kubernetes.io/name=workflow,agent-obs.io/governed=true \
     --image="10.1.1.240:5000/agent-obs/workflow:$TAG" --image-pull-policy="$POLICY" \
     --env=MCP_CONNECT_TIMEOUT=5 "$@" \
     --command -- python -c "$SNIPPET" 2>&1 | tee /dev/stderr | grep -q "^RESULT unreachable=$expect tools=[1-9]"

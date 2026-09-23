@@ -68,6 +68,20 @@ is a separate MinIO user, and `minio-verify` confirms it still works and is stil
   would follow the time range.
 - **The thesis paragraph in README.md** is the author's.
 
+## Found by the 2026-09-23 teardown and rebuild
+
+- **The MCP containers have no readinessProbe.** `kubectl rollout status` therefore returns
+  while uvicorn is still binding, and anything that connects immediately afterwards fails
+  with `ConnectError`. Add an HTTP or TCP probe on 8080 so "rolled out" means "listening".
+  This cost real debugging time because it shares its error string with a NetworkPolicy
+  refusal; see LEARNINGS.md, 2026-09-23.
+- **LiteLLM's own housekeeping spans dominate a quiet day.** `postgres get_data`,
+  `postgres get_user_object` and `reset_budget_job ...` arrive continuously under the
+  `litellm-gateway` service name, about 1,150 spans a day with no agent running. Decide
+  whether to drop them in the Collector (they are noise in every count and in the retention
+  figures) or to keep them and always filter in queries. If they are kept, the guide should
+  say so where it counts spans.
+
 ## Lower priority
 
 - **The analyser's 8192-token cap is unexercised.** It was raised after a truncation at

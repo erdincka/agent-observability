@@ -6,7 +6,16 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# Runs with the workflow's network identity, deliberately. Chapter 7's
+# mcp-ingress-from-workflow policy admits port 8080 only from pods labelled
+# app.kubernetes.io/name=workflow, and governed-default-deny-egress is what
+# permits DNS out. Without both labels this pod is refused by the policy —
+# which is the policy working, but it makes the helper useless after `make
+# netpol`. This client runs the workflow's own code, so borrowing the
+# workflow's identity is honest rather than a loophole.
+
 kubectl run "mcp-probe-$$" --namespace agent-obs-app --rm -i --quiet --restart=Never \
+--labels=app.kubernetes.io/name=workflow,agent-obs.io/governed=true \
     --image="10.1.1.240:5000/agent-obs/mcp:$(scripts/image-tag.sh mcp)" -- python - <<'PY'
 import asyncio
 

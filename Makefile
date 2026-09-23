@@ -504,6 +504,13 @@ step5: mcp-image mcp mcp-probe ## Everything in step 5
 
 # ------------------------------------------------------------ verification ---
 
+.PHONY: teardown
+# Deliberately not wired into any other target, and refuses to run without
+# CONFIRM=yes. The inverse of the build: see scripts/teardown.sh for why the
+# order (releases, then CNPG clusters, then namespaces) is not arbitrary.
+teardown: ## Remove the lab from the cluster (CONFIRM=yes); leaves MinIO and lab infrastructure alone
+	CONFIRM=$(CONFIRM) ./scripts/teardown.sh
+
 .PHONY: drift
 drift: env-check ## Does the cluster run what this repo describes? (kubectl diff + helm values)
 	./scripts/drift.sh
