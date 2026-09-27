@@ -91,27 +91,13 @@ config:
       summary: debug
 
     # ---- chapter 8: which traces go to the restricted store -----------------
-    # A trace is "flagged" if any span in it records a refusal, a degraded
-    # outcome or an error. Flagged traces are copied in full to a second
-    # database under separate access control; everything else stays only in
-    # the main store. The decision is per trace, which is what the OpenLIT UI
-    # cannot express (chapter 5) and the Collector can.
-    tail_sampling/flagged:
-      decision_wait: 45s
-      num_traces: 5000
-      policies:
-        - name: outcome-not-ok
-          type: string_attribute
-          string_attribute: { key: triage.outcome, values: [denied, truncated, empty, degraded] }
-        - name: tool-denied
-          type: string_attribute
-          string_attribute: { key: authz.decision, values: [deny] }
-        - name: guardrail-intervened
-          type: string_attribute
-          string_attribute: { key: litellm.guardrail.status, values: [guardrail_intervened] }
-        - name: error-status
-          type: status_code
-          status_code: { status_codes: [ERROR] }
+    # Not here any more, and the reason is worth keeping. Tail sampling decided
+    # a trace's fate 45 seconds after its FIRST span, while an agent run lasts
+    # minutes and its flag-worthy event arrives late. Run 29c02aa387fb missed
+    # the window by 0.8 seconds and was never copied. No fixed window is
+    # reliably longer than an agent, so the decision moved to after the trace
+    # is complete: scripts/promote-flagged.sh, `make restricted-promote`.
+    # See LEARNINGS.md, 2026-09-27.
 
     batch:
       timeout: 5s
@@ -142,19 +128,9 @@ config:
         max_interval: 30s
 
     # ---- chapter 8: the restricted store ------------------------------------
-    # Same ClickHouse, a second database. The exporter creates it and its
-    # tables. Access is what differs: `make ch-restricted-user` creates a reader
-    # that can SELECT here and nowhere else, and the OpenLIT UI never reads it.
-    clickhouse/restricted:
-      endpoint: tcp://clickhouse.agent-obs-platform.svc.cluster.local:9000?dial_timeout=10s&compress=lz4
-      database: otel_restricted
-      username: ${env:CLICKHOUSE_USER}
-      password: ${env:CLICKHOUSE_PASSWORD}
-      create_schema: true
-      traces_table_name: otel_traces
-      ttl: 0
-      timeout: 10s
-      retry_on_failure: { enabled: true, initial_interval: 5s, max_interval: 30s }
+    # No exporter here any more. The restricted copy is taken from what is
+    # already stored, by `make restricted-promote`, so it is identical to the
+    # main record rather than the product of a second, independent redaction.
 
     # ---- chapter 8: the archive ---------------------------------------------
     # Every trace batch, after redaction, as OTLP JSON objects in MinIO. The
@@ -183,12 +159,6 @@ config:
         receivers: [otlp]
         processors: [memory_limiter, redaction/content, batch]
         exporters: [clickhouse, awss3/archive, debug]
-      # Restricted store: only flagged traces, whole, redacted. A second
-      # pipeline on the same receiver — the Collector fans out.
-      traces/restricted:
-        receivers: [otlp]
-        processors: [memory_limiter, redaction/content, tail_sampling/flagged, batch]
-        exporters: [clickhouse/restricted]
       logs:
         receivers: [otlp]
         processors: [memory_limiter, redaction/content, batch]

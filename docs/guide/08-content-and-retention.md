@@ -11,9 +11,10 @@ exporter; ClickHouse S3 disk, storage policy and TTL; MinIO.
 ## Run
 
 ```bash
-make collector                 # redaction, restricted routing, archive
+make collector                 # redaction and archive
 make clickhouse && make ch-restricted-user && make retention
 make demo-content-redacted     # SDK content capture ON for one run; prove nothing lands
+make restricted-promote        # copy flagged traces, whole, into the restricted store
 make demo-restricted-access    # the restricted reader: allowed there, refused here
 make retention-status          # partitions by disk; objects in MinIO
 make retention-move-oldest     # move a partition to S3 by hand (the TTL does it nightly)
@@ -54,7 +55,8 @@ and, per service, what the Collector masked before storage:
 | triage-workflow | `db.query.text` | 16 |
 
 The same run, flagged because the model asked to restart a deployment and was denied,
-appears whole in `otel_restricted.otel_traces` (180 spans, one trace). The restricted
+appears whole in `otel_restricted.otel_traces` once `make restricted-promote` has copied
+it there (180 spans, one trace). The restricted
 reader counts them and is refused on the main table with `ACCESS_DENIED`. Partitions older
 than a day sit on the `s3_cold` disk; the archive bucket holds gzip'd OTLP JSON batches.
 
@@ -83,11 +85,21 @@ so "did two runs ask the same thing" is answerable and the query itself is not. 
 before the authorization decision, so a denied call still says what it was denied access
 *to*.
 
-**Routing is per trace, which the Collector can do and the UI cannot.** The tail sampler
-holds each trace for 45 seconds and copies it whole to the restricted database if any span
+**Routing is per trace, which the UI cannot express — but it cannot happen while the
+trace is still running.** A trace is copied whole to the restricted database if any span
 carries a refusal, a non-`ok` outcome, a guardrail intervention or an error. The main store
 keeps everything; the restricted store is the audit queue. The two databases share an
 instance and differ in exactly one thing, who may read them.
+
+This started as a tail-sampling processor in the Collector and had to move. Tail sampling
+decides at a fixed offset from a trace's **first** span — 45 seconds here — and an agent run
+lasts minutes with its flag-worthy event arriving late. One run's denial landed at 45.8 s
+and was never copied: 0.8 seconds past the window, on a lab where everything worked. No
+fixed window is reliably longer than an agent. `make restricted-promote` instead selects
+completed traces — quiet for 60 seconds, so "whole" is guaranteed — and copies them from
+what is already stored, which also makes the restricted copy identical to the main record
+rather than the output of a second redaction pass. The cost is honest: it is a step that
+has to be scheduled, and a real deployment runs it as a job rather than a `make` target.
 
 **Retention is three things, not one.** The hot table moves parts to S3 after a day and
 deletes after seven years, under ClickHouse's own TTL. The archive is a second, independent

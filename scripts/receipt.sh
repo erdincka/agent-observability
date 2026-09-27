@@ -58,7 +58,7 @@ check "none in any stored log record" "$([ "$logleaks" = 0 ] && echo ok || echo 
 restricted=$(q "SELECT count() FROM otel_restricted.otel_traces WHERE TraceId='$TID'" 2>/dev/null || echo 0)
 flagged=$(q "SELECT count() FROM otel_traces WHERE TraceId='$TID' AND (SpanAttributes['triage.outcome'] IN ('denied','truncated','empty','degraded') OR SpanAttributes['authz.decision']='deny' OR SpanAttributes['litellm.guardrail.status']='guardrail_intervened' OR StatusCode='Error')")
 echo "== 7. routing   (flagged spans: $flagged; copies in the restricted store: $restricted)"
-if [ "$flagged" != 0 ]; then check "a flagged trace is present, whole, in the restricted store" "$([ "$restricted" = "$n" ] && echo ok || echo no)" "$restricted of $n"; else check "an unflagged trace is not in the restricted store" "$([ "$restricted" = 0 ] && echo ok || echo no)"; fi
+if [ "$flagged" != 0 ]; then check "a flagged trace is present, whole, in the restricted store" "$([ "$restricted" = "$n" ] && echo ok || echo no)" "$restricted of $n — run: make restricted-promote"; else check "an unflagged trace is not in the restricted store" "$([ "$restricted" = 0 ] && echo ok || echo no)"; fi
 disk=$(q "SELECT arrayStringConcat(groupUniqArray(disk_name), ',') FROM system.parts WHERE database='otel' AND table='otel_traces' AND active AND partition = (SELECT toString(toDate(min(Timestamp))) FROM otel.otel_traces WHERE TraceId='$TID')")
 echo "  partition storage: $disk   (moves to s3_cold after a day; deleted after 7 years)"
 

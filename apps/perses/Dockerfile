@@ -1,4 +1,5 @@
-# Perses, with the ClickHouse trace-query plugin from this project's upstream PR.
+# Perses, with the ClickHouse trace-query plugin from this project's upstream PR,
+# and a newer TraceTable than the release bundles.
 #
 # The stock image bundles every plugin from perses/plugins at
 # /etc/perses/plugins-archive, including a ClickHouse plugin that has no trace
@@ -34,16 +35,25 @@ ARG PLUGINS_COMMIT=8649448046b95b19cb165a21f2d936eb0e729b9b
 WORKDIR /src
 RUN git init -q . && git remote add origin "$PLUGINS_REPO" \
  && git fetch -q --depth 1 origin "$PLUGINS_COMMIT" && git checkout -q FETCH_HEAD
+# TraceTable is built from the same commit for one reason: the stock 0.11.0 has
+# no `links.trace`, so clicking a row in the audit dashboard's Runs table cannot
+# set the traceId variable, and the Gantt below it stays on whatever was typed
+# by hand. The dashboards have configured that link since chapter 10; the plugin
+# just could not see it. 0.12.0-beta.3 declares peers on Perses 0.55-beta, but
+# the ClickHouse plugin from this same branch is also a 0.55-beta build and
+# loads fine on 0.54.0, so the range is a build-time hint rather than a gate.
 RUN npm ci --no-audit --no-fund \
  && percli plugin build --plugin.path=clickhouse --skip.npm-install=true \
- && ls -l clickhouse/*.tar.gz
+ && percli plugin build --plugin.path=tracetable --skip.npm-install=true \
+ && ls -l clickhouse/*.tar.gz tracetable/*.tar.gz
 
 # --- stage 3: curate the archive directory
 FROM persesdev/perses:v0.54.0 AS stock
 FROM debian:bookworm-slim AS curate
 COPY --from=stock /etc/perses/plugins-archive /archives
-RUN rm -v /archives/ClickHouse-*.tar.gz
+RUN rm -v /archives/ClickHouse-*.tar.gz /archives/TraceTable-*.tar.gz
 COPY --from=build /src/clickhouse/*.tar.gz /archives/
+COPY --from=build /src/tracetable/*.tar.gz /archives/
 RUN ls -1 /archives
 
 # --- stage 4: Perses itself, unchanged, plus the curated archives

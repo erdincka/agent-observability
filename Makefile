@@ -343,6 +343,10 @@ retention-move-oldest: ## Move the oldest hot partition of otel_traces to the S3
 	$(MAKE) -s ch-query Q="ALTER TABLE otel.otel_traces MOVE PARTITION '$$p' TO VOLUME 'cold'"; \
 	$(MAKE) -s ch-query Q="SELECT partition, disk_name, rows FROM system.parts WHERE database='otel' AND table='otel_traces' AND active AND partition='$$p' FORMAT PrettyCompact"
 
+.PHONY: restricted-promote
+restricted-promote: env-check ## Copy flagged traces, whole, into the restricted store (chapter 8)
+	./scripts/promote-flagged.sh
+
 .PHONY: demo-content-redacted
 # The honest version of the no-content claim: emit content on purpose, prove
 # it never lands. The run's spans carry redaction.masked.keys instead.

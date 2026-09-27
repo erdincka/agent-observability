@@ -38,3 +38,7 @@ receipts/
 
 # Pre-teardown dumps: evidence, not source
 backups/
+
+# Personal data
+LEARNINGS.md
+CONTRIBUTIONS.md

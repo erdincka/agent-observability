@@ -1,6 +1,6 @@
 # Enterprise Agent Observability & Governance Lab
 
-A self-hosted playground and a guide. A small multi-agent workflow, three MCP tool servers
+A self-hosted playground and a guide. A small multi-agent workflow, four MCP tool servers
 and a model gateway, instrumented end to end with the OpenTelemetry GenAI semantic
 conventions on Kubernetes, built to work out one pattern: how an enterprise that cannot
 store prompt content can still see, govern and audit what its agents do.
@@ -12,25 +12,63 @@ and the upstream gaps are the product. The workflow is the specimen.
 
 ## Why this exists
 
-<!-- TODO(human): the thesis, in your own words. See the "Learn by Doing" note in the
-     session that created this file. Five to ten lines: who cannot log content and why,
-     what they still have to answer, what the spec leaves to them, and what this lab
-     sets out to show. This is the paragraph only you can write credibly. -->
+## Why I built this
 
-## The four questions, and the claim
+I started getting the same set of questions more and more often as our conversations with customers moved into **agentic AI deployments** in their enterprises. Whether they were building their own agents or using ready-made platforms, everyone was running into the same tension:
 
-Regulated organisations often cannot store prompt or completion content, and still have
-to answer, months later:
+- They wanted agents to be **productive and adaptive**.
+- But they also needed to be able to answer, months later:
+  1. **What did the agent do?**
+  2. **On whose behalf?**
+  3. **With what data access?**
+  4. **Can you prove it later?**
 
-1. **What did the agent do?**
-2. **On whose behalf?**
-3. **With what data access?**
-4. **Can you prove it later?**
+And in many of these organisations—especially in regulated industries—they **cannot store prompt or completion content** in logs or traces because of PII, PHI, IP, or classification rules.
 
-The claim under test is that a platform can produce **audit-grade agent traces without
-recording the content**. The [governance matrix](docs/governance-matrix.md) tracks each
-question against the control that answers it, the evidence in the stored trace, and where
-the answer is still "no".
+Sandboxing agents and implementing end-to-end controls with permissions helps, but only up to a point. The hard-to-track issues require more than just blocking requests or allowing access to certain data. I needed a way to provide a **full lineage** from where agents started to diverge from their tasks (or took paths they shouldn’t have), without creating a compliance problem by storing the actual content.
+
+## The problem I was trying to solve
+
+Managing thousands of agents across hundreds of connection points means you must be able to:
+
+- Track **individual agents with immutable identities**.
+- Then **trace and replay** what each agent did from the start of a task until completion (or termination).
+
+In some industries more than others, personal and/or intellectual property (IP) information simply cannot be stored in logs or traces. Yet the ability to understand **what data is being read, generated, or provided** becomes critical—in some cases a legal necessity.
+
+So I started with the simplest question and the most straightforward approach:
+
+> How can I trace every action taken, every document read, and every decision made by an agent **without storing the prompt, context, and the response**?
+
+And then:
+
+- What is the right way to store this?
+- What mechanisms should I use to connect multiple requests and tools to a single task?
+- How can an organisation safely, securely, and confidently **monitor and have visibility** into what their agents are doing, and detect when any of them go down rogue paths?
+
+## How I approached it (and what I’m not claiming)
+
+I wanted to use the most common, standard **open-source frameworks** while implementing this lab. I’m not an expert in these tools; I’m learning as I go and leaning on my “AI friends” to help me understand and extend them.
+
+The stack I landed on:
+
+- **LiteLLM** as an AI gateway to provide routing, logging, request limiting, and tracking, and to allow both local and remote API calls.
+- **OpenTelemetry** and **OpenLIT** for observability orchestration inside the code.
+- **MLflow** for evaluation.
+- **Perses** for dashboards.
+- **ClickHouse** and **MinIO** for storage.
+
+Along the way, I discovered features missing in some of these tools (which I’ve logged separately). Instead of just working around them, I decided to treat those gaps as **contribution opportunities**. I’m not claiming deep expertise here; I’m trying to add or fix what’s missing with help from AI-assisted development and the existing communities around these projects.
+
+## What this is (and isn’t)
+
+This is **not** an end product or a reference implementation. It’s a **lab project** and a demonstration of:
+
+- What questions can be answered while staying compliant with PII and data-protection regulations.
+- How you can design **audit-grade agent traces without recording the content**.
+- How open-source observability primitives can be extended to support agent-specific needs.
+
+The [governance matrix](docs/governance-matrix.md) tracks each of the core questions against the control that answers it, the evidence in the stored trace, and where the answer is still “no”. It’s honest about what works, what’s partial, and what still needs more work—because that’s exactly where I am in this journey too.
 
 ## Where it stands
 
@@ -114,7 +152,7 @@ flowchart LR
   WF --> WDB
   GW --> LDB
   WF & M1 & M2 & M3 & M4 & GW -- OTLP --> COL
-  COL -- "only writer" --> CH
+  COL -- "all telemetry, redacted" --> CH
   COL -- "every batch, redacted" --> MINIO
   CH -. "parts older than a day" .-> MINIO
   UI -- reads --> CH
@@ -129,9 +167,11 @@ before anything is stored. Everything else produces or carries telemetry.
 
 The properties that matter, each established in LEARNINGS.md rather than assumed:
 
-- **The Collector is the only thing that writes to ClickHouse.** OpenLIT reads the same
-  `otel_traces` table, with its bundled ClickHouse and collector disabled. Redaction,
-  routing and sampling only work if the Collector owns the write path.
+- **Everything reaches storage through the Collector's redaction.** It is the only
+  writer of telemetry, and OpenLIT reads `otel_traces` with its bundled ClickHouse and
+  collector disabled. One other thing writes: `make restricted-promote` copies flagged
+  traces — already stored, already redacted — into the restricted database, because a
+  tail-sampling window cannot span an agent run (LEARNINGS.md, 2026-09-27).
 - **Every model call goes through the gateway.** The workflow names a route (`local`,
   `remote`), never a model, so the gateway is the one place model access can be observed
   and, later, governed.
