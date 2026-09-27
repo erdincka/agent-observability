@@ -73,9 +73,10 @@ contributed upstream, an MLflow evaluation loop, and this guide. The
 [governance matrix](docs/governance-matrix.md) says where each question stands, row by
 row, including the two rows that remain "partial" by design.
 
-Every finding along the way is in [LEARNINGS.md](LEARNINGS.md); the thirteen upstream gaps
-it produced are in [CONTRIBUTIONS.md](CONTRIBUTIONS.md), one of them already a pull
-request that this lab now runs.
+The thirteen upstream gaps this produced are in [CONTRIBUTIONS.md](CONTRIBUTIONS.md), one
+of them already a pull request that this lab now runs. Every finding along the way, in
+order and with the failures kept in, is in `LEARNINGS.md` — the author's working log, which
+stays private; references to it throughout this repository point there deliberately.
 
 The commands assume [this lab's environment](docs/lab-environment.md), a three-node k3s
 cluster with a few pre-existing pieces. A single-machine path is the next infrastructure
@@ -89,7 +90,6 @@ work, so that a reader can run the guide without a cluster.
 | Run the experiments in order | [The guide](docs/guide/README.md) |
 | Check a deployment against the four questions | [Governance matrix](docs/governance-matrix.md) |
 | See what was found in the upstream tools | [CONTRIBUTIONS.md](CONTRIBUTIONS.md) |
-| Read what happened, in order, failures included | [LEARNINGS.md](LEARNINGS.md) |
 | Build it on this lab | [Lab environment](docs/lab-environment.md) and `make help` |
 | See every decision and its alternative | [Decisions](docs/decisions.md) |
 | Look at it: four UIs | OpenLIT (per-trace GenAI view), LiteLLM (keys, teams, guardrails), Perses (the dashboards and trace view), MLflow (evaluation runs). Hostnames in the [lab environment](docs/lab-environment.md) page |
@@ -261,7 +261,6 @@ apps/workflow   the LangGraph triage workflow
 apps/mcp        the four MCP tool servers (one image, four Deployments)
 apps/perses     Perses with the contributed ClickHouse trace-query plugin
 scripts/        build, tagging, probes, the receipt, the evaluation loop and the drift check
-LEARNINGS.md    the chronological log, failures kept in
 CONTRIBUTIONS.md  upstream gaps, and what was filed
 TODO.md         deferred work
 ```

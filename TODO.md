@@ -66,7 +66,6 @@ is a separate MinIO user, and `minio-verify` confirms it still works and is stil
   MLflow; the local 3B model scored 0 of 4.
 - **The Perses dashboards use 5-minute buckets fixed in SQL.** A `$step`-style variable
   would follow the time range.
-- **The thesis paragraph in README.md** is the author's.
 
 ## Found by the 2026-09-23 teardown and rebuild
 

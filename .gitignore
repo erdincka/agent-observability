@@ -39,6 +39,5 @@ receipts/
 # Pre-teardown dumps: evidence, not source
 backups/
 
-# Personal data
+# The author's working log stays local. CONTRIBUTIONS.md is published.
 LEARNINGS.md
-CONTRIBUTIONS.md
