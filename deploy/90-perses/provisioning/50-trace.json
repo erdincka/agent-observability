@@ -1,0 +1,95 @@
+{
+  "kind": "Dashboard",
+  "metadata": {
+    "name": "trace",
+    "project": "agent-obs"
+  },
+  "spec": {
+    "display": {
+      "name": "5. Trace detail"
+    },
+    "duration": "24h",
+    "refreshInterval": "1m",
+    "variables": [
+      {
+        "kind": "TextVariable",
+        "spec": {
+          "name": "traceId",
+          "display": {
+            "name": "Trace ID"
+          },
+          "value": ""
+        }
+      }
+    ],
+    "panels": {
+      "intro": {
+        "kind": "Panel",
+        "spec": {
+          "display": {
+            "name": "Reading this page"
+          },
+          "plugin": {
+            "kind": "Markdown",
+            "spec": {
+              "text": "One trace, read from ClickHouse through the `ClickHouseTraceQuery` plugin this project contributed upstream (perses/plugins#813). You arrive here by clicking a trace name on **4. Audit**, which sets the Trace ID above.\n\nIt is a separate page for a reason. Perses writes a dashboard's own state back into the URL, so a link that targets the dashboard it already sits on has its `var-` parameter overwritten before anything reads it, and the click appears to do nothing. Arriving at a different dashboard mounts it fresh, and the variable is read from the URL. See CONTRIBUTIONS.md item 14."
+            }
+          }
+        }
+      },
+      "trace": {
+        "kind": "Panel",
+        "spec": {
+          "display": {
+            "name": "Trace $traceId"
+          },
+          "plugin": {
+            "kind": "TracingGanttChart",
+            "spec": {}
+          },
+          "queries": [
+            {
+              "kind": "TraceQuery",
+              "spec": {
+                "plugin": {
+                  "kind": "ClickHouseTraceQuery",
+                  "spec": {
+                    "query": "$traceId",
+                    "table": "otel.otel_traces"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "layouts": [
+      {
+        "kind": "Grid",
+        "spec": {
+          "items": [
+            {
+              "x": 0,
+              "y": 0,
+              "width": 24,
+              "height": 3,
+              "content": {
+                "$ref": "#/spec/panels/intro"
+              }
+            },
+            {
+              "x": 0,
+              "y": 3,
+              "width": 24,
+              "height": 20,
+              "content": {
+                "$ref": "#/spec/panels/trace"
+              }
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

@@ -32,7 +32,7 @@
           "plugin": {
             "kind": "Markdown",
             "spec": {
-              "text": "Trace search and the trace view read ClickHouse directly through the `ClickHouseTraceQuery` plugin this project contributed upstream (perses/plugins#813). Click a row to open the trace below. Every span a control touched carries its decision; the run span (`triage_run`) carries who, what incident, which route and which image."
+              "text": "Trace search and the trace view read ClickHouse directly through the `ClickHouseTraceQuery` plugin this project contributed upstream (perses/plugins#813). Click a trace name to open it in **5. Trace detail**; the panel below still takes a trace id typed or pasted into the Trace ID box. Every span a control touched carries its decision; the run span (`triage_run`) carries who, what incident, which route and which image."
             }
           }
         }
@@ -47,7 +47,7 @@
             "kind": "TraceTable",
             "spec": {
               "links": {
-                "trace": "/projects/agent-obs/dashboards/audit?var-traceId=${traceId}"
+                "trace": "/projects/agent-obs/dashboards/trace?var-traceId=${traceId}"
               }
             }
           },
@@ -77,7 +77,7 @@
             "kind": "TraceTable",
             "spec": {
               "links": {
-                "trace": "/projects/agent-obs/dashboards/audit?var-traceId=${traceId}"
+                "trace": "/projects/agent-obs/dashboards/trace?var-traceId=${traceId}"
               }
             }
           },

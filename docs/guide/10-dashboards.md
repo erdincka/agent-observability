@@ -28,11 +28,19 @@ Four dashboards, one per audit question, and nothing created in the UI:
 | 3. Can you prove it later? | dangling parents (must be 0), agent vs gateway token sums, spans redacted per service, traces routed to the restricted store |
 | 4. Audit: runs and traces | a table of runs, a table of flagged runs, and the Gantt view of any trace, read from ClickHouse |
 
-Clicking a trace in either table opens it below: the table's `links.trace` sets the
-dashboard's `traceId` variable and the Gantt panel follows it. That needs a TraceTable
-newer than the one Perses v0.54.0 bundles — 0.11.0 has no `links.trace` at all, so the
-click does nothing and the id has to be pasted by hand. `apps/perses/Dockerfile` therefore
-builds TraceTable 0.12.0-beta.3 from the same commit as the ClickHouse plugin. The Gantt shows every service
+Clicking a trace name in either table opens it on **5. Trace detail**, a dashboard whose
+only job is to show one trace. Two things had to be true for that single click to work.
+
+The table's `links.trace` needs a TraceTable newer than the one Perses v0.54.0 bundles:
+0.11.0 has no `links.trace` option at all, so the click does nothing and the id has to be
+pasted by hand. `apps/perses/Dockerfile` therefore builds TraceTable 0.12.0-beta.3 from the
+same commit as the ClickHouse plugin.
+
+And the link has to target a *different* dashboard. Pointed at the dashboard it already
+sits on, the click does not take effect until the page is reloaded — the trace id reaches
+the URL but the variable, and so the Gantt, keeps its old value (CONTRIBUTIONS.md item 14).
+Arriving at another dashboard mounts it fresh and the variable is read from the URL. The
+audit page keeps its own Gantt panel for a trace id typed or pasted in by hand. The Gantt shows every service
 in the run, with the tool servers' spans nested under the workflow's.
 
 ## What it means

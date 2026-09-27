@@ -731,6 +731,38 @@ content-capture setting when building the guardrail span (omit or truncate the r
 under `no_content`), or record the hook's *verdict* rather than its return value for
 pre-call hooks, since "allow" carries the information and the payload does not.
 
+### 14. Perses — a panel link that sets a variable on its own dashboard needs a page reload
+
+**Project:** [perses/perses](https://github.com/perses/perses)
+**Status:** Reported and reproduced in this lab, 2026-09-27, on Perses v0.54.0 with
+TraceTable 0.12.0-beta.3. Not filed. The mechanism is not instrumented — see below.
+
+The audit dashboard's Runs table sets `links.trace` to
+`/projects/agent-obs/dashboards/audit?var-traceId=${traceId}` — the dashboard it is on,
+because the Gantt panel it feeds is directly below the table. Clicking a trace name does
+not update the page. The trace id has to be pasted into the Trace ID box by hand, or the
+page reloaded (`cmd-R`), after which the same URL renders correctly.
+
+The same link pointing at a **different** dashboard works in a single click: the variable
+is read from the URL on mount, and the Gantt renders immediately. That is the fix this lab
+took — a `5. Trace detail` dashboard whose only job is to show one trace.
+
+**What is confirmed:** the reload-is-required behaviour, reported by the lab's author and
+reproduced by him; and that the cross-dashboard link works first time, verified in a
+browser here.
+
+**What is not confirmed:** why. The plausible reading is that a dashboard writes its own
+state (`start`, `refresh`, variables) back into the URL, so a same-route navigation has its
+`var-` parameter overwritten from the still-unchanged in-memory value before anything reads
+it. That was not instrumented, and an earlier attempt to verify it here produced a false
+negative for an unrelated reason: the anchor's bounding box covers the whole table cell, so
+an automated click at the box's centre lands among the service chips and hits nothing at
+all. Anyone filing this should watch the address bar and the variable state across a
+same-route click before asserting a cause.
+
+**Contribution type:** bug report against Perses core, once the mechanism is pinned down.
+A one-dashboard reproduction is easy: any panel link that sets `var-` on its own dashboard.
+
 ## Watch list
 
 Carried from the project brief. These are suspected gaps to verify, not findings. Status column updated
