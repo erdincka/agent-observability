@@ -12,7 +12,13 @@ TID=$(q "SELECT TraceId FROM otel_traces WHERE SpanAttributes['triage.run_id']='
 echo "run $RUN  trace $TID"
 # Wait for the span count to settle (two consecutive equal reads).
 prev=-1; for i in $(seq 1 20); do
-  n=$(q "SELECT count() FROM otel_traces WHERE TraceId='$TID'"); [ "$n" = "$prev" ] && break; prev=$n; sleep 3
+  n=$(q "SELECT count() FROM otel_traces WHERE TraceId='$TID'")
+  # Settle on the masked-key rows too, not just the span count. They arrive in a
+  # later batch than the spans they annotate, so a poll that watches only the count
+  # stops early and prints an empty "what redaction stripped" table on a run where
+  # redaction worked perfectly — the demo then fails to show its own evidence.
+  m=$(q "SELECT count() FROM otel_traces WHERE TraceId='$TID' AND SpanAttributes['redaction.masked.keys']!=''")
+  [ "$n:$m" = "$prev" ] && break; prev="$n:$m"; sleep 3
 done
 echo "spans: $n"
 PATTERNS="v LIKE '%You are the retriever%' OR v LIKE '%You are the analyser%' OR v LIKE '%Latency on the checkout%' OR v LIKE '%Incident to investigate%' OR v LIKE '%LIKELY CAUSE%'"

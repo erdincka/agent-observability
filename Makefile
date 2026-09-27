@@ -462,7 +462,7 @@ demo-model-denied: ## Every agent on a key that may only use `remote`, run on `l
 	$(MAKE) workflow-triage KEY_PROFILE=restricted ROUTE=local
 
 .PHONY: demo-rate-limited
-demo-rate-limited: ## Every agent on a 2 rpm key: the retriever is cut off mid-loop
+demo-rate-limited: ## Every agent on a 2 rpm key: the gateway 429s and the client waits them out
 	$(MAKE) workflow-triage KEY_PROFILE=throttled
 
 .PHONY: demo-guardrail
