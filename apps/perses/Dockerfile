@@ -29,9 +29,10 @@ RUN git config --global --add safe.directory '*'
 # --- stage 2: the plugin, from the PR commit
 FROM toolbox AS build
 ARG PLUGINS_REPO=https://github.com/erdincka/plugins.git
-# The PR head after review rounds one and two (search grouped and limited in ClickHouse,
-# explicit FORMAT JSON, typed JSON-schema attributes). Was 2175f77f, the pre-review commit.
-ARG PLUGINS_COMMIT=8649448046b95b19cb165a21f2d936eb0e729b9b
+# The PR head after review round three (resource grouping independent of attribute order,
+# DateTime timestamps), on top of rounds one and two (search grouped and limited in ClickHouse,
+# explicit FORMAT JSON, typed JSON-schema attributes). The pre-review commit was 2175f77f.
+ARG PLUGINS_COMMIT=f297b860e8f901760f8a9beb7da3e387bb1ae4c4
 WORKDIR /src
 RUN git init -q . && git remote add origin "$PLUGINS_REPO" \
  && git fetch -q --depth 1 origin "$PLUGINS_COMMIT" && git checkout -q FETCH_HEAD
