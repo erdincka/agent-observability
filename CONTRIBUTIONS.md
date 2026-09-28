@@ -107,6 +107,12 @@ source before answering; three were fixed in one commit (`86494480`), two were p
 - *Put to the maintainers.* The CUE selector accepts `datasource: "$var"` but the plugin passes it through unresolved.
   True, and identical in the two existing ClickHouse queries; proposed fixing all three together in a follow-up.
 
+**Review round three, 2026-09-28.** Two comments from @jgbernalp, both applied in `f297b860`: resource grouping
+now uses the attributes sorted by name, and the trace lookup accepts `DateTime` as well as `DateTime64` timestamps
+(`toUnixTimestamp64Nano` only takes `DateTime64`). @nico151999, who had a local draft with the same goal, offered to
+help; the natural piece for them is variable datasource support across the three ClickHouse queries. CI, now
+approved by a maintainer, is green on every job.
+
 **Next step:** wait for the maintainers' answers on the lookup bound and the variable datasource, then the next
 review round.
 
@@ -115,7 +121,7 @@ Perses image (`apps/perses/Dockerfile`) and drives the audit dashboard's run tab
 lab's own ClickHouse (guide chapter 10). One more data point for the reviewers: it works against a table with
 the exporter's schema, the identity attributes of chapters 6 and 7, and 180-span traces. The pin stayed at
 `2175f77f`, the pre-review commit, until 2026-09-23; with the PR parked awaiting maintainers, the lab moved to the
-PR head `86494480` (image `c345cd32d62c`). On the lab's data the runs panel now fetches 26 rows instead of 4,737
+PR head `86494480` (image `c345cd32d62c`), and on 2026-09-28 to `f297b860` (image `87c0d145505d`). On the lab's data the runs panel now fetches 26 rows instead of 4,737
 span rows (LEARNINGS, 2026-09-23).
 
 ### 2. OpenLIT — the ClickHouse schema contract with an existing Collector is undocumented
