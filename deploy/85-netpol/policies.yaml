@@ -74,6 +74,9 @@ spec:
       ports: [{ protocol: TCP, port: 9090 }]
 ---
 # mcp-ops: the Kubernetes API, which k3s serves on the control-plane node.
+# Two addresses because kube-router evaluates the policy after the Service
+# address (10.43.0.1, k3s's default) has been translated to the node's own;
+# the node's address is K8S_API_IP in .env, filled in by `make netpol`.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -88,7 +91,7 @@ spec:
         - ipBlock: { cidr: 10.43.0.1/32 }
       ports: [{ protocol: TCP, port: 443 }]
     - to:
-        - ipBlock: { cidr: 10.1.1.30/32 }
+        - ipBlock: { cidr: __K8S_API_IP__/32 }
       ports: [{ protocol: TCP, port: 6443 }]
 ---
 # Tool servers accept calls from the workflow only. A pod without the

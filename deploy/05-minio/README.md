@@ -38,15 +38,22 @@ cluster can reach it. Wiring each one is its own change.
 
 ## Shape
 
+Every value below comes from `.env` (`PVE_*`, `MINIO_VM_*`); these are the original
+lab's, kept as the worked example.
+
 | | |
 | :- | :- |
-| VM | `1040` / `minio`, 4 vCPU, 8 GiB, full clone of template `9000` |
-| Address | `10.1.1.20` — static, via cloud-init, outside the MetalLB pool |
-| Boot disk | 32 GiB on the `data` zfspool |
-| Data disk | 500 GiB on the `data` zfspool, bare XFS at `/mnt/minio/disk1` |
-| S3 API | `http://10.1.1.20:9000` |
-| Console | `http://10.1.1.20:9001` — log in with `MINIO_ROOT_*` from `.env` |
+| VM | `MINIO_VMID` / `minio`, 4 vCPU, 8 GiB, full clone of template `PVE_TEMPLATE_VMID` |
+| Address | `MINIO_VM_IP` — static, via cloud-init, outside any LoadBalancer pool |
+| Boot disk | 32 GiB on `PVE_STORAGE` |
+| Data disk | `MINIO_VM_DATA_GB` on `PVE_STORAGE`, bare XFS at `/mnt/minio/disk1` |
+| S3 API | `MINIO_ENDPOINT`, i.e. `http://<MINIO_VM_IP>:9000` |
+| Console | `http://<MINIO_VM_IP>:9001` — log in with `MINIO_ROOT_*` from `.env` |
 | Version | `RELEASE.2025-09-07T16-13-09Z`, pinned and checksum-verified |
+
+The template can be any cloud-init image with `qemu-guest-agent`: Ubuntu 24.04 or
+Debian 13 have both been used. The installer adds `xfsprogs` and `curl` itself if the
+image lacks them (Debian's does).
 
 Single-node single-drive, so **no erasure coding**. Deliberate: the ZFS pool underneath is
 a three-disk stripe with no redundancy, so parity across four zvols on that pool would
@@ -66,7 +73,9 @@ Two, and the distinction is the point:
   `S3_ENDPOINT` keys.
 
 `make minio-verify` asserts both that an object round-trips **and** that a bucket outside
-the policy is refused. The second assertion is the one worth having: without it an
+the policy is refused. It runs the lab's own `mc` image (`apps/mc/Dockerfile`, built by
+`make mc-image` from the same pinned GitHub release as the VM's binary): Docker Hub stopped
+serving `minio/mc` in 2026-10, together with the binaries on dl.min.io. The second assertion is the one worth having: without it an
 over-broad credential passes exactly as well as a correct one.
 
 ## No TLS

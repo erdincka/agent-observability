@@ -4,9 +4,10 @@
 # ImagePullBackOff on a pod a minute later, in a different terminal.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+[ -f .env ] && { set -a; . ./.env; set +a; }
 
 app="${1:?usage: require-image.sh <workflow|mcp|perses>}"
-REGISTRY="${REGISTRY:-10.1.1.240:5000}"
+REGISTRY="${REGISTRY:?set REGISTRY in .env}"
 tag=$(scripts/image-tag.sh "$app")
 
 if curl -fsS -o /dev/null -I \

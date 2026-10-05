@@ -17,7 +17,7 @@ cd "$(dirname "$0")/../.."
 set -a; . ./.env; set +a
 
 MINIO_VM_IP="${MINIO_VM_IP:-10.1.1.20}"
-MINIO_VM_USER="${MINIO_VM_USER:-ubuntu}"
+MINIO_VM_USER="${MINIO_VM_USER:-${VM_USER:-ubuntu}}"
 MINIO_BUCKETS="${MINIO_BUCKETS:-otel-archive clickhouse-cold cnpg-backups workflow-artifacts}"
 : "${MINIO_ROOT_USER:?}"; : "${MINIO_ROOT_PASSWORD:?}"
 : "${MINIO_K8S_ACCESS_KEY:?set MINIO_K8S_ACCESS_KEY in .env}"

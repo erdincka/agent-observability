@@ -17,7 +17,10 @@ cd "$(dirname "$0")/../.."
 
 set -a; . ./.env; set +a
 NS="${NS:-agent-obs-platform}"
-MC_IMAGE="${MC_IMAGE:-minio/mc:RELEASE.2025-08-13T08-35-41Z}"
+# The lab's own mc image (apps/mc/Dockerfile, `make mc-image`): Docker Hub no
+# longer serves minio/mc. Same release as the binary on the VM.
+MC_VERSION="${MC_VERSION:-RELEASE.2025-08-13T08-35-41Z}"
+MC_IMAGE="${MC_IMAGE:-${REGISTRY:?set REGISTRY in .env}/agent-obs/mc:$MC_VERSION}"
 POD="minio-verify-$$"
 marker="agent-obs verify $(date -u +%FT%TZ) $RANDOM"
 

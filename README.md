@@ -78,9 +78,11 @@ of them already a pull request that this lab now runs. Every finding along the w
 order and with the failures kept in, is in `LEARNINGS.md` — the author's working log, which
 stays private; references to it throughout this repository point there deliberately.
 
-The commands assume [this lab's environment](docs/lab-environment.md), a three-node k3s
-cluster with a few pre-existing pieces. A single-machine path is the next infrastructure
-work, so that a reader can run the guide without a cluster.
+The commands run on either of two environments, and everything that differs between them
+lives in `.env`: the three-node k3s cluster the guide was first built on, or a single VM
+on a Proxmox host that `make cluster` builds from a cloud-init template and equips with
+the Gateway, CloudNativePG and Prometheus the manifests expect. The
+[lab environment](docs/lab-environment.md) page lists both.
 
 ## How to use this repository
 

@@ -27,6 +27,12 @@ class Settings:
     # sampling reasons. A baseline you cannot diff is not a baseline.
     temperature: float = float(os.getenv("MODEL_TEMPERATURE", "0"))
     seed: int = int(os.getenv("MODEL_SEED", "1337"))
+    # How long one model call may take before the client gives up. CPU
+    # inference in a GPU-less lab: a 3B model writing to its token cap took
+    # eleven minutes on a 12-vCPU VM (2026-10-05, LEARNINGS.md), where the
+    # original lab's 16-core workers kept the same seeded run under five. A
+    # property of the machine, so it comes from .env (MODEL_TIMEOUT).
+    model_timeout: float = float(os.getenv("MODEL_TIMEOUT", "300"))
 
     otlp_endpoint: str = os.getenv(
         "OTLP_ENDPOINT", "http://otel-collector.agent-obs-platform.svc.cluster.local:4318"

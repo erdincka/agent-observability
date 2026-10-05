@@ -6,6 +6,7 @@ see step 2 in LEARNINGS.md for what happens if you reverse 20 and 30.
 | Dir | What | How |
 | :- | :- | :- |
 | `05-minio/` | MinIO object storage — a **VM on the Proxmox host**, not in the cluster | `make minio` |
+| `01-cluster/` | The single-VM path: a k3s VM, and the Gateway, CloudNativePG and Prometheus the manifests assume | `make cluster` |
 | `00-namespace/` | `agent-obs-platform` and `agent-obs-app` | `make namespaces` |
 | `10-clickhouse/` | ClickHouse hot store, plain StatefulSet | `make clickhouse` |
 | `20-otel-collector/` | OTel Collector (contrib) — **owns the write path** | `make collector` |
@@ -21,7 +22,9 @@ see step 2 in LEARNINGS.md for what happens if you reverse 20 and 30.
 | `95-mlflow/` | MLflow, the evaluation loop, on CloudNativePG and MinIO | `make mlflow` |
 
 `05-minio/` is numbered before `00-namespace/` because it is not in the cluster at all —
-it is the one dependency that has to exist before Kubernetes is even relevant.
+it is the one dependency that has to exist before Kubernetes is even relevant. `01-cluster/`
+is the cluster itself, for a reader who does not have one; on a cluster that already has
+its three prerequisites it is skipped.
 
 Credentials come from a gitignored `.env` at the repo root, rendered into Kubernetes
 Secrets by `make secrets`. Copy `.env.example` to `.env` first. No password appears in any
@@ -39,10 +42,11 @@ goes missing later, this answers "pipeline or application?" in about ten seconds
 
 ## Reaching the OpenLIT UI
 
-The `platform` Gateway serves `*.kube.local` at `10.1.1.241`. Either add a hosts entry:
+The `platform` Gateway serves `*.kube.local` at `GATEWAY_IP` (from `.env`). Either add a
+hosts entry:
 
 ```
-10.1.1.241  openlit.kube.local
+<GATEWAY_IP>  openlit.kube.local
 ```
 
 or port-forward: `kubectl port-forward -n agent-obs-platform svc/openlit 3000:3000`.

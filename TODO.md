@@ -33,7 +33,7 @@ Deleted from the tree. It was never applied.
 
 ## 5. Rotate the MinIO root password
 
-MinIO VM, `10.1.1.20`
+MinIO VM (`MINIO_VM_IP`; `10.1.1.20` on the original lab)
 
 `deploy/05-minio/provision-vm.sh` passed the root password on the `sudo` command line, and
 sudo logged it: one journal entry and one `/var/log/auth.log` line, written 2026-09-09.
@@ -48,10 +48,11 @@ is a separate MinIO user, and `minio-verify` confirms it still works and is stil
 
 ## Deferred at the end of phase 3, 2026-09-13
 
-- **A single-machine path.** The guide's commands assume this lab (docs/lab-environment.md
-  marks what is lab-specific). A k3d or single-node variant with port-forwards instead of
-  the gateway, a local registry, and MinIO in-cluster would let a reader run the guide on
-  a laptop. Deliberately left: the review happens on this lab.
+- **A single-machine path** — done 2026-10-05, as one VM rather than k3d:
+  `deploy/01-cluster/` builds a k3s VM on a Proxmox host and installs the Gateway,
+  CloudNativePG and Prometheus; every lab-specific value (hypervisor, template, registry,
+  build context, kubeconfig, gateway address) moved into `.env`. MinIO stays on its own
+  VM. A laptop variant (k3d, port-forwards, MinIO in-cluster) is still open.
 - **Object lock on the archive bucket, and the receipt digest written there.** Versioning
   stops silent overwrite; nothing stops deletion. Chapter 9 names the shape.
 - **Rate-limit refusals are not attributed on the 429 span.** Which key hit the limit is in

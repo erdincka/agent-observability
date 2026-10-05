@@ -2,6 +2,7 @@
 # excluded here is uploaded to the build host. Secrets first.
 .env
 *.env
+kubeconfig*
 deploy/50-litellm/config.rendered.yaml
 **/.venv
 **/__pycache__

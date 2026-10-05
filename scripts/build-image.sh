@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# Build and push an app image on the pve Docker host.
+# Build and push an app image on the amd64 Docker host named by .env.
 #
 # Native amd64. The workstation is arm64 macOS and the cluster is amd64; an image
 # built locally fails inside the pod with an exec-format error rather than at
-# build time. The `pve` Docker context is an x86_64 VM, so this is a native build.
+# build time. DOCKER_BUILD_CONTEXT (`docker context ls`) names an x86_64 Docker
+# host, so this is a native build. That host must trust REGISTRY as an insecure
+# registry (daemon.json: "insecure-registries"), since it is plain HTTP.
 #
 # Tags are immutable. The tag is the last commit that touched the app's inputs
 # (scripts/image-tag.sh), and a clean tag that already exists in the registry is
@@ -16,12 +18,14 @@
 # and nothing presents a dirty build as a commit.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+[ -f .env ] && { set -a; . ./.env; set +a; }
 
 APP="${1:?usage: build-image.sh <app> [context]}"
 # Some images need files from outside their own directory: the MCP servers bake
 # in docs/runbooks and this repository's git history, so their context is `.`.
 CONTEXT="${2:-apps/${APP}}"
-REGISTRY="${REGISTRY:-10.1.1.240:5000}"
+REGISTRY="${REGISTRY:?set REGISTRY in .env}"
+CTX="${DOCKER_BUILD_CONTEXT:?set DOCKER_BUILD_CONTEXT in .env (docker context ls)}"
 TAG="$(scripts/image-tag.sh "$APP")"
 IMAGE="${REGISTRY}/agent-obs/${APP}:${TAG}"
 
@@ -38,11 +42,11 @@ elif curl -fsS -o /dev/null -I \
   echo "==> WARNING: FORCE=1 overwrites ${TAG}; nodes that cached it will not notice" >&2
 fi
 
-echo "==> building ${IMAGE} on docker context pve (native amd64)"
+echo "==> building ${IMAGE} on docker context ${CTX} (native amd64)"
 echo "    dockerfile: apps/${APP}/Dockerfile   context: ${CONTEXT}"
-docker --context pve build -f "apps/${APP}/Dockerfile" -t "${IMAGE}" "${CONTEXT}"
+docker --context "$CTX" build -f "apps/${APP}/Dockerfile" -t "${IMAGE}" "${CONTEXT}"
 
-echo "==> pushing to the in-cluster registry"
-docker --context pve push "${IMAGE}"
+echo "==> pushing to ${REGISTRY}"
+docker --context "$CTX" push "${IMAGE}"
 echo "==> ${IMAGE}"
-echo "    $(docker --context pve image inspect --format '{{index .RepoDigests 0}}' "${IMAGE}")"
+echo "    $(docker --context "$CTX" image inspect --format '{{index .RepoDigests 0}}' "${IMAGE}")"

@@ -302,7 +302,7 @@ def _model(max_tokens: int, agent: str) -> ChatOpenAI:
         seed=settings.seed,
         max_tokens=max_tokens,
         max_retries=1,
-        timeout=300,  # CPU inference in a GPU-less lab
+        timeout=settings.model_timeout,  # CPU inference in a GPU-less lab; see Settings
         model_kwargs={"user": identity.PRINCIPAL},
     )
 

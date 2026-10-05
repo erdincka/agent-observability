@@ -44,13 +44,16 @@ spec:
     metadata:
       labels: { app.kubernetes.io/name: ollama }
     spec:
-      # Pin to a worker: the control plane has 16Gi and CPU inference will
-      # happily consume all of it.
+      # Prefer a worker: on the original three-node lab the control plane had
+      # 16Gi and CPU inference would happily consume all of it. A preference
+      # rather than a requirement so the single-VM path, where the only node
+      # is the control plane, can schedule it at all.
       affinity:
         nodeAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-            nodeSelectorTerms:
-              - matchExpressions:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              preference:
+                matchExpressions:
                   - { key: node-role.kubernetes.io/control-plane, operator: DoesNotExist }
       containers:
         - name: ollama

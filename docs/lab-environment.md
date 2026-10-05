@@ -1,32 +1,40 @@
 # This lab's environment
 
 The guide is written so that the *findings* transfer to any Kubernetes cluster with the
-same components. The *commands* currently assume the author's lab. This page is the
-honest list of what they assume, so that a reader can map each item onto their own
-environment or wait for the single-machine path.
+same components. The *commands* assume one of two environments, and everything that
+differs between them lives in `.env`: nothing about a hypervisor, a registry or a cluster
+address is baked into the Makefile or the scripts. This page is the honest list of what
+is assumed, so that a reader can map each item onto their own environment.
 
-**A single-machine path is the next piece of infrastructure work**: one node, no gateway
-controller, no private registry, no hypervisor. Until it exists, expect to adapt the
-items marked *lab-specific*.
+**Two shapes are supported.** The original lab, a three-node k3s cluster that already had
+a Gateway, CloudNativePG and Prometheus from other work; and the single-machine path,
+one VM on a Proxmox host that `make cluster` builds and equips from nothing
+([deploy/01-cluster/](../deploy/01-cluster/README.md)). The second is what a reader
+without a cluster should use. Both were built with this repository; the single-VM path
+on 2026-10-05.
 
 ## Cluster
 
-| Item | Value here | Portable? |
-| :- | :- | :- |
-| Kubernetes | k3s v1.36, three amd64 nodes | Any cluster with a default StorageClass |
-| StorageClass | `local-path`, `WaitForFirstConsumer`, `Delete`, no expansion | Any. Size ClickHouse generously; volumes here cannot grow |
-| CloudNativePG operator | 1.30.0, pre-installed | Install it, or replace the two `Cluster` manifests with any PostgreSQL |
-| Prometheus | kube-prometheus-stack in `observability`, pre-existing | The metrics tool server queries it. Any Prometheus URL works |
-| Envoy Gateway | Gateway `platform` at 10.1.1.241, `*.kube.local` | *Lab-specific.* Only used to expose the two UIs; `kubectl port-forward` is the alternative |
-| Container registry | 10.1.1.240:5000, plain HTTP | *Lab-specific.* Any registry the nodes can pull from |
-| Build host | Docker context `pve`, amd64, over SSH | *Lab-specific.* Any amd64 Docker host, or a multi-arch build |
-| Tempo, Grafana | Present from other work, unused | Irrelevant, but note the shared OTLP ports |
+| Item | Original lab | Single-VM path | Where it is set |
+| :- | :- | :- | :- |
+| Kubernetes | k3s v1.36, three amd64 nodes | k3s v1.36.5, one VM: 12 vCPU, 32 GiB, 160 GiB | `K3S_*` |
+| StorageClass | `local-path`, `WaitForFirstConsumer`, `Delete`, no expansion | same | — |
+| CloudNativePG operator | 1.30.0, pre-installed | 1.30.0, `make cluster-prereqs` | — |
+| Prometheus | kube-prometheus-stack in `observability`, pre-existing | kube-prometheus-stack 91.9.0, Grafana and Alertmanager off, `make cluster-prereqs` | — |
+| Envoy Gateway | Gateway `platform` at a MetalLB address, `*.kube.local` | Gateway `platform` at the VM's address (k3s ServiceLB), `*.kube.local` | `GATEWAY_IP` |
+| Container registry | in-cluster, plain HTTP | a Docker host on the LAN, plain HTTP | `REGISTRY` |
+| Build host | Docker context `pve`, amd64, over SSH | Docker context `zbook`, amd64, over SSH | `DOCKER_BUILD_CONTEXT` |
+| kubeconfig | the workstation's default | `./kubeconfig-<name>`, written by `make k3s-vm` | `KUBECONFIG` |
+
+The Gateway controller is only used to expose the UIs; `kubectl port-forward` is the
+alternative. The build host must list `REGISTRY` under `insecure-registries` in its
+`daemon.json`; the k3s installer tells containerd the same thing.
 
 ## Outside the cluster
 
 | Item | Value here | Portable? |
 | :- | :- | :- |
-| MinIO | VM 1040 on a Proxmox host, 10.1.1.20, 500 GiB XFS | *Lab-specific.* Any S3 endpoint with four buckets. Not needed until chapter 8 |
+| MinIO | A VM on the Proxmox host, built by `make minio-vm` from `MINIO_VM_*`; Ubuntu 24.04 or Debian 13 template | Any S3 endpoint with four buckets. Not needed until chapter 8 |
 | Ollama | In-cluster, CPU only, `qwen2.5:3b` | Any Ollama; set `OLLAMA_BASE_URL` |
 | External model route | OpenRouter, opt-in via `.env` | Any OpenAI-compatible endpoint |
 
@@ -38,8 +46,9 @@ which is why images are built remotely.
 ## Building it here
 
 ```bash
-cp .env.example .env
-make minio              # optional, and only on this lab's hypervisor
+cp .env.example .env    # then fill in the "Where this runs" section
+make cluster            # single-VM path only: the k3s VM and its prerequisites
+make minio              # the MinIO VM, buckets, in-cluster credential, round-trip
 make step1              # namespaces, secrets, ClickHouse, Collector, smoke trace
 make step2              # OpenLIT
 make step3              # Ollama, model pull, gateway and its database
@@ -54,12 +63,14 @@ make perses-image && make perses           # chapter 10
 make mlflow && make evaluate               # chapter 11
 ```
 
-`make help` lists every target. [deploy/README.md](../deploy/README.md) has the
+`make cluster` before `make minio`: the MinIO VM itself needs no cluster, but `make minio`
+also publishes the credential into the cluster and round-trips an object from a pod, so it
+wants one to exist. `make help` lists every target. [deploy/README.md](../deploy/README.md) has the
 deployment order and why it matters.
 
 ## Reaching the UIs
 
-Four UIs, all through the `platform` Gateway at 10.1.1.241, all `*.kube.local`:
+Four UIs, all through the `platform` Gateway at `GATEWAY_IP`, all `*.kube.local`:
 
 | UI | Hostname | What it shows | Login |
 | :- | :- | :- | :- |
@@ -68,7 +79,7 @@ Four UIs, all through the `platform` Gateway at 10.1.1.241, all `*.kube.local`:
 | Perses | `perses.kube.local` | the four dashboards and the trace view (chapter 10) | none |
 | MLflow | `mlflow.kube.local` | the evaluation runs (chapter 11) | none |
 
-Add hosts entries pointing at the gateway, or `kubectl port-forward` the Services
+Add hosts entries pointing at `GATEWAY_IP`, or `kubectl port-forward` the Services
 (`openlit:3000`, `litellm:4000`, `perses:8080`, `mlflow:80`, all in `agent-obs-platform`).
 
 ## Reproducibility, as it stands
@@ -78,4 +89,5 @@ Add hosts entries pointing at the gateway, or `kubectl port-forward` the Service
 - An image tag is the last commit that touched that image's inputs. Uncommitted inputs
   produce a `-dirty` tag that is rebuilt and pulled every time.
 - `make drift` diffs every manifest and every Helm value against the cluster.
-- Not yet done: a teardown and rebuild onto an empty cluster.
+- Teardown and rebuild onto the same cluster: done 2026-09-23. Build onto an empty
+  machine: done 2026-10-05, on the single-VM path.

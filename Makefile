@@ -18,7 +18,26 @@ CAPTURE     ?= false
 APP_NS      := agent-obs-app
 COLLECTOR_CHART_VERSION := 0.172.1
 OPENLIT_CHART_VERSION   := 1.24.0
-REGISTRY    := 10.1.1.240:5000
+
+# Where this lab runs is a property of .env, not of this file. The registry the
+# nodes pull from, the Docker context that builds amd64 images and the
+# kubeconfig of the target cluster are read from .env here, once, and exported
+# to every recipe and script. `make env-check` names anything missing. Read
+# with sed rather than `include`d, so a quoted or $-containing value in .env
+# cannot upset make.
+envval = $(strip $(shell sed -n 's/^$(1)=//p' .env 2>/dev/null | tail -1 | tr -d '"'))
+REGISTRY             ?= $(call envval,REGISTRY)
+DOCKER_BUILD_CONTEXT ?= $(call envval,DOCKER_BUILD_CONTEXT)
+KUBECONFIG_FROM_ENV  := $(call envval,KUBECONFIG)
+ifneq ($(KUBECONFIG_FROM_ENV),)
+export KUBECONFIG := $(abspath $(KUBECONFIG_FROM_ENV))
+endif
+export REGISTRY DOCKER_BUILD_CONTEXT
+# How long one model call, and one whole triage run, may take. CPU inference
+# speed is a property of the machine, so both come from .env, with the
+# original lab's values as defaults.
+MODEL_TIMEOUT  ?= $(or $(call envval,MODEL_TIMEOUT),300)
+TRIAGE_TIMEOUT ?= $(or $(call envval,TRIAGE_TIMEOUT),900)
 
 # Immutable image tags: the last commit that touched each image's inputs, with
 # `-dirty` appended when those inputs have uncommitted changes. Recursive (=), so
@@ -38,8 +57,31 @@ help: ## Show available targets
 	grep -E '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
 
 .PHONY: env-check
-env-check: ## Fail early if .env is missing
+env-check: ## Fail early if .env is missing, or does not say where the lab runs
 	@test -f .env || { echo "ERROR: no .env — copy .env.example to .env and fill it in"; exit 1; }
+	@test -n "$(REGISTRY)" || { echo "ERROR: REGISTRY is not set in .env (the registry the nodes pull from)"; exit 1; }
+	@test -n "$(DOCKER_BUILD_CONTEXT)" || { echo "ERROR: DOCKER_BUILD_CONTEXT is not set in .env (see: docker context ls)"; exit 1; }
+
+# ------------------------------------------------------------- the cluster ---
+# The single-machine path. On a cluster that already has these pieces, skip
+# this and point KUBECONFIG, REGISTRY, GATEWAY_IP and K8S_API_IP in .env at it.
+
+.PHONY: k3s-vm
+k3s-vm: env-check ## Provision a single-VM k3s cluster on the Proxmox host and fetch its kubeconfig
+	./deploy/01-cluster/provision-k3s-vm.sh
+
+.PHONY: cluster-prereqs
+cluster-prereqs: env-check ## Install what the manifests assume: Envoy Gateway, CloudNativePG, kube-prometheus-stack
+	./deploy/01-cluster/prereqs.sh
+
+.PHONY: cluster
+cluster: k3s-vm cluster-prereqs ## A fresh single-VM cluster, ready for step 1
+
+.PHONY: cluster-status
+cluster-status: ## Which cluster make is talking to, and is it there
+	@echo "KUBECONFIG=$${KUBECONFIG:-<default>}"
+	@kubectl get nodes -o wide
+	@kubectl get gateway -n gateway 2>/dev/null || echo "no platform Gateway: make cluster-prereqs"
 
 # ---------------------------------------------------------------- step 0 -----
 # MinIO lives outside the cluster, so it comes before the cluster's own steps.
@@ -68,14 +110,20 @@ minio-secret: env-check namespaces ## Publish the MinIO credential into both nam
 			--dry-run=client -o yaml | kubectl apply -f -; \
 	done
 
+.PHONY: mc-image
+# Docker Hub stopped serving minio/mc (2026-10); the in-cluster checks run the
+# lab's own build of the same pinned release. See apps/mc/Dockerfile.
+mc-image: env-check ## Build and push the MinIO client image the in-cluster checks run
+	./scripts/build-mc-image.sh
+
 .PHONY: minio-verify
-minio-verify: env-check ## Round-trip an object from inside the cluster, and prove the key is scoped
+minio-verify: env-check mc-image ## Round-trip an object from inside the cluster, and prove the key is scoped
 	./deploy/05-minio/verify-from-cluster.sh
 
 .PHONY: minio-status
 minio-status: env-check ## Show the MinIO service and its disk
 	@set -a; . ./.env; set +a; \
-	ssh "$${MINIO_VM_USER:-ubuntu}@$$MINIO_VM_IP" \
+	ssh "$${MINIO_VM_USER:-$${VM_USER:-ubuntu}}@$$MINIO_VM_IP" \
 		'systemctl is-active minio; df -h /mnt/minio/disk1; sudo mc --version 2>/dev/null | head -1'
 
 .PHONY: minio
@@ -236,14 +284,14 @@ postgres: ## Deploy the workflow's PostgreSQL (CloudNativePG)
 	kubectl wait --for=condition=Ready cluster/workflow-db -n $(APP_NS) --timeout=300s
 
 .PHONY: workflow-image
-workflow-image: ## Build and push the workflow image on the pve context
+workflow-image: ## Build and push the workflow image on DOCKER_BUILD_CONTEXT
 	./scripts/build-image.sh workflow
 
 .PHONY: workflow-probe
 workflow-probe: ## Run the plumbing proof: a trace starting in the workflow
 	./scripts/require-image.sh workflow
 	-kubectl delete job workflow-probe -n $(APP_NS) --ignore-not-found
-	sed -e 's|__WORKFLOW_TAG__|$(WORKFLOW_TAG)|g' -e 's|__PULL_POLICY__|$(call pull_policy,$(WORKFLOW_TAG))|g' \
+	sed -e 's|__REGISTRY__|$(REGISTRY)|g' -e 's|__WORKFLOW_TAG__|$(WORKFLOW_TAG)|g' -e 's|__PULL_POLICY__|$(call pull_policy,$(WORKFLOW_TAG))|g' \
 		deploy/70-workflow/probe-job.yaml | kubectl apply -f -
 	kubectl wait --for=condition=complete job/workflow-probe -n $(APP_NS) --timeout=600s
 	kubectl logs -n $(APP_NS) job/workflow-probe
@@ -257,9 +305,10 @@ workflow-triage: ## Run the triage workflow (INCIDENT=, ROUTE=)
 	sed -e 's|__INCIDENT__|$(INCIDENT)|' -e 's|__ROUTE__|$(ROUTE)|' \
 		-e 's|__PRINCIPAL__|$(PRINCIPAL)|' -e 's|__AGENT_ROLE_UPPER__|$(shell echo $(AGENT_ROLE) | tr a-z A-Z)|' \
 		-e 's|__AGENT_ROLE__|$(AGENT_ROLE)|' -e 's|__KEY_PROFILE__|$(KEY_PROFILE)|' -e 's|__CAPTURE__|$(CAPTURE)|' \
-		-e 's|__WORKFLOW_TAG__|$(WORKFLOW_TAG)|g' -e 's|__PULL_POLICY__|$(call pull_policy,$(WORKFLOW_TAG))|g' \
+		-e 's|__MODEL_TIMEOUT__|$(MODEL_TIMEOUT)|' \
+		-e 's|__REGISTRY__|$(REGISTRY)|g' -e 's|__WORKFLOW_TAG__|$(WORKFLOW_TAG)|g' -e 's|__PULL_POLICY__|$(call pull_policy,$(WORKFLOW_TAG))|g' \
 		deploy/70-workflow/triage-job.yaml | kubectl apply -f -
-	kubectl wait --for=condition=complete job/workflow-triage -n $(APP_NS) --timeout=900s
+	kubectl wait --for=condition=complete job/workflow-triage -n $(APP_NS) --timeout=$(TRIAGE_TIMEOUT)s
 	kubectl logs -n $(APP_NS) job/workflow-triage
 
 .PHONY: workflow-call
@@ -295,7 +344,7 @@ mcp: secrets ## Deploy the four MCP tool servers and the role->tool policy
 	kubectl create configmap tool-policy --namespace $(APP_NS) \
 		--from-file=policy.json=deploy/80-mcp/policy.json \
 		--dry-run=client -o yaml | kubectl apply -f -
-	sed -e 's|__MCP_TAG__|$(MCP_TAG)|g' -e 's|__PULL_POLICY__|$(call pull_policy,$(MCP_TAG))|g' \
+	sed -e 's|__REGISTRY__|$(REGISTRY)|g' -e 's|__MCP_TAG__|$(MCP_TAG)|g' -e 's|__PULL_POLICY__|$(call pull_policy,$(MCP_TAG))|g' \
 		deploy/80-mcp/servers.yaml | kubectl apply -f -
 	kubectl rollout status deployment/mcp-metrics  -n $(APP_NS) --timeout=300s
 	kubectl rollout status deployment/mcp-changes  -n $(APP_NS) --timeout=300s
@@ -427,8 +476,8 @@ mlflow: env-check minio-secret mlflow-db ## Deploy MLflow, the evaluation loop (
 	kubectl apply -f deploy/95-mlflow/httproute.yaml
 
 .PHONY: evaluate
-evaluate: ## Run the corpus N times and score each run in MLflow: make evaluate N=1 ROUTE=local
-	./scripts/evaluate.py --n $(N) --route $(ROUTE)
+evaluate: env-check ## Run the corpus N times and score each run in MLflow: make evaluate N=1 ROUTE=local
+	@set -a; . ./.env; set +a; ./scripts/evaluate.py --n $(N) --route $(ROUTE)
 
 .PHONY: mlflow-logs
 mlflow-logs: ## Tail MLflow
@@ -445,8 +494,13 @@ runs: ## List recent runs with outcome per agent
 	@$(MAKE) -s ch-query Q="SELECT r.run AS run, r.incident AS incident, r.route AS route, r.started AS started, arrayStringConcat(groupArray(concat(a.agent, '=', a.outcome)), ' ') AS outcomes FROM (SELECT SpanAttributes['triage.run_id'] AS run, SpanAttributes['triage.incident_id'] AS incident, SpanAttributes['triage.model_route'] AS route, toStartOfSecond(Timestamp) AS started, TraceId FROM otel_traces WHERE SpanName='triage_run') AS r LEFT JOIN (SELECT TraceId, SpanAttributes['gen_ai.agent.name'] AS agent, SpanAttributes['triage.outcome'] AS outcome FROM otel_traces WHERE SpanAttributes['gen_ai.operation.name']='invoke_agent' AND SpanAttributes['triage.outcome']!='') AS a ON r.TraceId=a.TraceId GROUP BY 1,2,3,4 ORDER BY started DESC LIMIT 20 FORMAT PrettyCompact"
 
 .PHONY: netpol
-netpol: ## Apply the NetworkPolicies that make the gateway unbypassable (chapter 7)
-	kubectl apply -f deploy/85-netpol/policies.yaml
+# K8S_API_IP (the control-plane node) is templated in: mcp-ops reaches the API
+# server through the Service address, which kube-router sees post-NAT as the
+# node's own. Defaults to the k3s VM's address on the single-VM path.
+netpol: env-check ## Apply the NetworkPolicies that make the gateway unbypassable (chapter 7)
+	@set -a; . ./.env; set +a; \
+	ip="$${K8S_API_IP:-$$K3S_VM_IP}"; test -n "$$ip" || { echo "ERROR: set K8S_API_IP in .env (the control-plane node address)"; exit 1; }; \
+	sed -e "s|__K8S_API_IP__|$$ip|g" deploy/85-netpol/policies.yaml | kubectl apply -f -
 
 # ------------------------------------------------------------- demos (ch 6/7) --
 # Each one is a run whose trace shows a control being applied. Read the

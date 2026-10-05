@@ -18,9 +18,9 @@ spec:
       restartPolicy: Never
       containers:
         - name: workflow
-          # Immutable commit tag with IfNotPresent, or a `-dirty` tag with Always;
-          # see scripts/build-image.sh.
-          image: 10.1.1.240:5000/agent-obs/workflow:__WORKFLOW_TAG__
+          # Registry from .env; immutable commit tag with IfNotPresent, or a
+          # `-dirty` tag with Always; see scripts/build-image.sh.
+          image: __REGISTRY__/agent-obs/workflow:__WORKFLOW_TAG__
           imagePullPolicy: __PULL_POLICY__
           env:
             - { name: OTEL_SERVICE_NAME, value: "triage-workflow" }
@@ -34,6 +34,10 @@ spec:
             # model — swapping local for remote changes nothing in the code and
             # everything in the trace.
             - { name: MODEL_ROUTE, value: "__ROUTE__" }
+
+            # Per-call model timeout, from .env: a property of how fast the
+            # machine runs CPU inference, not of the workflow.
+            - { name: MODEL_TIMEOUT, value: "__MODEL_TIMEOUT__" }
 
             # Stamped onto the run span so a trace says which build produced it.
             # The tag is immutable, so this names exactly one image.

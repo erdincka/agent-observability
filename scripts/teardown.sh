@@ -14,10 +14,10 @@
 #      ConfigMaps, NetworkPolicies and HTTPRoutes with them.
 #   4. A check that nothing survived.
 #
-# Deliberately NOT touched, because this repository has always declared them as
-# prerequisites rather than owning them: the MinIO VM and its buckets, the
-# `platform` Gateway, cert-manager, MetalLB, the CloudNativePG operator, the
-# in-cluster registry, and Prometheus.
+# Deliberately NOT touched, because this repository declares them as
+# prerequisites rather than as the lab: the MinIO VM and its buckets, the
+# `platform` Gateway, the CloudNativePG operator, the registry, and Prometheus
+# (on the single-VM path, deploy/01-cluster/ installs the cluster-side ones).
 #
 #   make teardown CONFIRM=yes
 set -uo pipefail

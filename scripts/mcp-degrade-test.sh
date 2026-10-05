@@ -7,6 +7,8 @@
 # Exits non-zero if any case aborts or reports the wrong count.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+[ -f .env ] && { set -a; . ./.env; set +a; }
+REGISTRY="${REGISTRY:?set REGISTRY in .env}"
 NS=agent-obs-app
 TAG=$(scripts/image-tag.sh workflow)
 POLICY=IfNotPresent; case "$TAG" in *-dirty) POLICY=Always;; esac
@@ -34,7 +36,7 @@ run_case() {
 
   kubectl run "belt-test-$$" -n "$NS" --rm -i --restart=Never --quiet \
   --labels=app.kubernetes.io/name=workflow,agent-obs.io/governed=true \
-    --image="10.1.1.240:5000/agent-obs/workflow:$TAG" --image-pull-policy="$POLICY" \
+    --image="${REGISTRY}/agent-obs/workflow:$TAG" --image-pull-policy="$POLICY" \
     --env=MCP_CONNECT_TIMEOUT=5 "$@" \
     --command -- python -c "$SNIPPET" 2>&1 | tee /dev/stderr | grep -q "^RESULT unreachable=$expect tools=[1-9]"
 }

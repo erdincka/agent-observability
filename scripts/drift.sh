@@ -18,6 +18,8 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 
 PLATFORM_NS=agent-obs-platform
+set -a; . ./.env; set +a
+REGISTRY="${REGISTRY:?set REGISTRY in .env}"
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 status=0
 
@@ -43,9 +45,13 @@ while IFS= read -r f; do
     */values.yaml|*/config.rendered.yaml|*.tmpl) continue ;;
     deploy/70-workflow/*) continue ;;
     deploy/80-mcp/policy.json) continue ;;
+    deploy/01-cluster/*) continue ;;   # prerequisites, not the lab: Helm releases checked nowhere here
+    deploy/85-netpol/policies.yaml)
+      sed -e "s|__K8S_API_IP__|${K8S_API_IP:-${K3S_VM_IP:-}}|g" "$f" > "$TMP/policies.yaml"
+      report "$f" kubectl diff -f "$TMP/policies.yaml" ;;
     deploy/80-mcp/servers.yaml)
       tag=$(scripts/image-tag.sh mcp)
-      sed -e "s|__MCP_TAG__|$tag|g" -e "s|__PULL_POLICY__|$(pull_policy "$tag")|g" "$f" > "$TMP/servers.yaml"
+      sed -e "s|__REGISTRY__|$REGISTRY|g" -e "s|__MCP_TAG__|$tag|g" -e "s|__PULL_POLICY__|$(pull_policy "$tag")|g" "$f" > "$TMP/servers.yaml"
       report "$f  (mcp:$tag)" kubectl diff -f "$TMP/servers.yaml" ;;
     deploy/50-litellm/litellm.yaml)
       ./scripts/render-litellm-config.py >/dev/null
@@ -101,11 +107,10 @@ helm_check openlit        "$(sed -n 's/^OPENLIT_CHART_VERSION *:= *//p' Makefile
 # same way here so the comparison is against what make would apply.
 PERSES_TAG=$(scripts/image-tag.sh perses)
 case "$PERSES_TAG" in *-dirty) PP=Always;; *) PP=IfNotPresent;; esac
-sed -e "s|__REGISTRY__|${REGISTRY:-10.1.1.240:5000}|" -e "s|__PERSES_TAG__|$PERSES_TAG|" -e "s|__PULL_POLICY__|$PP|" \
+sed -e "s|__REGISTRY__|${REGISTRY}|" -e "s|__PERSES_TAG__|$PERSES_TAG|" -e "s|__PULL_POLICY__|$PP|" \
   deploy/90-perses/values.yaml > "$TMP/perses.repo.yaml"
 helm_check perses "$(sed -n 's/^PERSES_CHART_VERSION *:= *//p' Makefile)" "$TMP/perses.repo.yaml"
 
-set -a; . ./.env; set +a
 u=$(kubectl get secret mlflow-db-app -n "$PLATFORM_NS" -o jsonpath='{.data.username}' 2>/dev/null | base64 -d)
 pw=$(kubectl get secret mlflow-db-app -n "$PLATFORM_NS" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d)
 sed -e "s|__MINIO_ENDPOINT__|$MINIO_ENDPOINT|" -e "s|^    user: \"\".*|    user: \"$u\"|" -e "s|^    password: \"\".*|    password: \"$pw\"|" \

@@ -23,6 +23,28 @@ say() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 say "Waiting for cloud-init to finish"
 cloud-init status --wait >/dev/null 2>&1 || true
 
+say "Packages"
+# Whatever the template is missing. Ubuntu's cloud image has xfsprogs; Debian's
+# does not, and the first run on a Debian 13 template died here with
+# "mkfs.xfs: command not found". Nothing below depends on the distribution
+# beyond having one of the two package managers.
+need=()
+command -v mkfs.xfs >/dev/null || need+=(xfsprogs)
+command -v curl     >/dev/null || need+=(curl)
+if [ "${#need[@]}" -gt 0 ]; then
+  echo "installing: ${need[*]}"
+  if command -v apt-get >/dev/null; then
+    DEBIAN_FRONTEND=noninteractive apt-get -qq update
+    DEBIAN_FRONTEND=noninteractive apt-get -qq install -y "${need[@]}"
+  elif command -v dnf >/dev/null; then
+    dnf -q install -y "${need[@]}"
+  else
+    echo "ERROR: cannot install ${need[*]}: neither apt-get nor dnf found" >&2; exit 1
+  fi
+else
+  echo "xfsprogs and curl present"
+fi
+
 say "Locating the data disk"
 # The boot disk is whichever disk carries /. Anything else that is a whole disk
 # and not removable is a candidate; we require exactly one, because guessing
@@ -82,14 +104,20 @@ mountpoint -q "$MOUNT" || mount "$MOUNT"
 df -h "$MOUNT"
 
 say "Installing MinIO $MINIO_VERSION"
-base=https://dl.min.io/server/minio/release/linux-amd64/archive
+# From GitHub Releases, not dl.min.io. On 2026-10-05 every path under
+# dl.min.io answered 410 Gone, archive included, and the newest release on
+# GitHub (RELEASE.2025-10-15) carries no binaries at all. The pinned release
+# still has its assets on GitHub, with the same checksum the lab recorded from
+# dl.min.io, so the pin and the checksum below are unchanged.
+minio_url="${MINIO_URL:-https://github.com/minio/minio/releases/download/$MINIO_VERSION/minio.linux-amd64.$MINIO_VERSION}"
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
-curl -fsSL -o "$tmp/minio" "$base/minio.$MINIO_VERSION"
+curl -fsSL -o "$tmp/minio" "$minio_url"
 echo "$MINIO_SHA256  $tmp/minio" | sha256sum -c -
 install -m 0755 "$tmp/minio" /usr/local/bin/minio
 
 say "Installing mc $MC_VERSION"
-curl -fsSL -o "$tmp/mc" "https://dl.min.io/client/mc/release/linux-amd64/archive/mc.$MC_VERSION"
+mc_url="${MC_URL:-https://github.com/minio/mc/releases/download/$MC_VERSION/mc.linux-amd64.$MC_VERSION}"
+curl -fsSL -o "$tmp/mc" "$mc_url"
 echo "$MC_SHA256  $tmp/mc" | sha256sum -c -
 install -m 0755 "$tmp/mc" /usr/local/bin/mc
 

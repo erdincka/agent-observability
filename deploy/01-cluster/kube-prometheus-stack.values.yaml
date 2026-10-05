@@ -1,0 +1,52 @@
+# Prometheus for the mcp-metrics tool server (deploy/80-mcp/servers.yaml), which
+# queries kube-prometheus-stack-prometheus.observability:9090 for instant
+# queries, metric names and active alerts. The chart's bundled kube-state-metrics,
+# node-exporter and the default alert rules are what give those tools something
+# to return on a cluster that is otherwise doing nothing.
+#
+# Grafana and Alertmanager are off: the guide deliberately has no Grafana, and
+# nothing reads alerts from Alertmanager (the tool reads them from Prometheus).
+# chart: prometheus-community/kube-prometheus-stack 91.9.0
+
+grafana:
+  enabled: false
+alertmanager:
+  enabled: false
+
+prometheus:
+  prometheusSpec:
+    retention: 7d
+    resources:
+      requests: { cpu: 100m, memory: 512Mi }
+      limits:   { cpu: "1",  memory: 2Gi }
+    # Lab size. A persistent volume would survive a pod restart but local-path
+    # cannot grow it; seven days of a single node fits in memory-backed storage.
+    storageSpec: {}
+
+prometheusOperator:
+  resources:
+    requests: { cpu: 50m,  memory: 128Mi }
+    limits:   { cpu: 500m, memory: 512Mi }
+
+kube-state-metrics:
+  resources:
+    requests: { cpu: 20m,  memory: 64Mi }
+    limits:   { cpu: 200m, memory: 256Mi }
+
+prometheus-node-exporter:
+  resources:
+    requests: { cpu: 20m,  memory: 32Mi }
+    limits:   { cpu: 200m, memory: 128Mi }
+
+# k3s runs the controller manager, scheduler, proxy and etcd inside the one
+# k3s process, with none of the metrics endpoints these targets scrape. Left
+# on, each produces a permanent "...Down" critical alert, which the first
+# triage run on this path duly reported as evidence. Off, as k3s documents.
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeProxy:
+  enabled: false
+kubeEtcd:
+  enabled: false

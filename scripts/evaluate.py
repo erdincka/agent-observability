@@ -30,8 +30,8 @@ different evidence and both can be answered per run:
   hypothesis_cites_evidence            does the hypothesis cite numbered items
   confident_cause_without_evidence     a stated cause on a run with no evidence
 
-MLflow is reached through the lab gateway with a Host header; set MLFLOW_URL
-and MLFLOW_HOST to reach it another way.
+MLflow is reached through the lab gateway (GATEWAY_IP in .env) with a Host
+header; set MLFLOW_URL and MLFLOW_HOST to reach it another way.
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ import time
 import urllib.error
 import urllib.request
 
-MLFLOW_URL = os.getenv("MLFLOW_URL", "http://10.1.1.241")
+MLFLOW_URL = os.getenv("MLFLOW_URL") or f"http://{os.getenv('GATEWAY_IP', '127.0.0.1')}"
 MLFLOW_HOST = os.getenv("MLFLOW_HOST", "mlflow.kube.local")
 EXPERIMENT = "triage"
 

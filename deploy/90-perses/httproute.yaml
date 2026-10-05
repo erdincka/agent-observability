@@ -1,6 +1,6 @@
 # Exposes Perses through the pre-existing Envoy Gateway, like the other UIs.
 # Reachable at http://perses.kube.local once that name resolves to the gateway
-# address (10.1.1.241).
+# address (GATEWAY_IP in .env).
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:

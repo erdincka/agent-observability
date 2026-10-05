@@ -17,21 +17,23 @@ cd "$(dirname "$0")/../.."
 set -a; . ./.env; set +a
 
 # --- shape, overridable from .env -------------------------------------------
+# Hypervisor, template and pool are properties of wherever this runs, so they
+# come from .env; the defaults below are only the original lab's values.
 PVE_HOST="${PVE_HOST:-pve}"
 PVE_TEMPLATE_VMID="${PVE_TEMPLATE_VMID:-9000}"
-PVE_STORAGE="${PVE_STORAGE:-data}"
+PVE_STORAGE="${PVE_STORAGE:-local-lvm}"
 MINIO_VMID="${MINIO_VMID:-1040}"
 MINIO_VM_NAME="${MINIO_VM_NAME:-minio}"
 MINIO_VM_IP="${MINIO_VM_IP:-10.1.1.20}"
-MINIO_VM_CIDR="${MINIO_VM_CIDR:-24}"
-MINIO_VM_GW="${MINIO_VM_GW:-10.1.1.1}"
-MINIO_VM_DNS="${MINIO_VM_DNS:-10.1.1.1}"
+MINIO_VM_CIDR="${MINIO_VM_CIDR:-${VM_CIDR:-24}}"
+MINIO_VM_GW="${MINIO_VM_GW:-${VM_GW:-10.1.1.1}}"
+MINIO_VM_DNS="${MINIO_VM_DNS:-${VM_DNS:-$MINIO_VM_GW}}"
 MINIO_VM_CORES="${MINIO_VM_CORES:-4}"
 MINIO_VM_MEMORY="${MINIO_VM_MEMORY:-8192}"
 MINIO_VM_BOOT_GB="${MINIO_VM_BOOT_GB:-32}"
 MINIO_VM_DATA_GB="${MINIO_VM_DATA_GB:-500}"
-MINIO_VM_USER="${MINIO_VM_USER:-ubuntu}"
-MINIO_VM_SSHKEY="${MINIO_VM_SSHKEY:-$HOME/.ssh/id_rsa.pub}"
+MINIO_VM_USER="${MINIO_VM_USER:-${VM_USER:-ubuntu}}"
+MINIO_VM_SSHKEY="${MINIO_VM_SSHKEY:-${VM_SSHKEY:-$HOME/.ssh/id_rsa.pub}}"
 
 # Pinned, with checksums, because "latest" makes a rebuild a different build.
 MINIO_VERSION="${MINIO_VERSION:-RELEASE.2025-09-07T16-13-09Z}"
