@@ -14,7 +14,8 @@ make perses              # the read-only ClickHouse user, the provisioning Confi
 make perses-dashboards   # after editing deploy/90-perses/provisioning/*.json
 ```
 
-Then `http://perses.kube.local`, project *Agent observability lab*. Or
+Then `http://perses.<GATEWAY_DOMAIN>` (the domain from `.env`), project *Agent observability
+lab*. Or
 `kubectl port-forward -n agent-obs-platform svc/perses 18080:8080`.
 
 ## What you should see

@@ -18,12 +18,13 @@ and a control point without telemetry is a rule nobody can prove was applied.
 | MCP tool servers (`apps/mcp`) | The agent's only route to data: metrics, git history, runbooks. | Yes, via the `mcp` SDK and OpenLIT | Yes. The `mcp` 2.x SDK carries `traceparent` in JSON-RPC `_meta` | Tool access, in chapter 7 |
 | LiteLLM gateway | The agent's only route to a model. | Yes, OTel v2 on the GenAI conventions | Yes. Joins an incoming trace rather than starting one | Identity, budgets, model access, content posture |
 | Ollama | The default model. CPU, 3B parameters. | No | n/a | Nothing |
-| OTel Collector (contrib) | The pipeline, and the **only writer** into storage. | n/a | n/a | Redaction, routing, sampling, retention |
+| OTel Collector (contrib) | The pipeline, and the **only write path** into storage; nothing reaches a table without its redaction. (`make restricted-promote` later copies already-stored traces between databases, chapter 8.) | n/a | n/a | Redaction, routing, archive, retention |
 | ClickHouse | Hot store for traces, metrics, logs. | No | n/a | Nothing. Storage is not policy. |
 | OpenLIT UI | A read-only view over the same tables. | No | n/a | Nothing |
 | PostgreSQL, two clusters | Workflow state and checkpoints; the gateway's identity tables. | No | n/a | Nothing directly. The gateway's controls live in its database. |
-| MinIO, on a VM outside the cluster | Retention tier. Deployed, **not yet wired** to anything. | No | n/a | Retention and immutability, in chapter 8 |
-| Perses | Dashboards as code. **Not deployed.** | No | n/a | Nothing |
+| MinIO, on a VM outside the cluster | Retention tier: every Collector batch archived, the ClickHouse cold tier, MLflow artefacts. | No | n/a | Retention and immutability, chapter 8. Versioning on; object lock not on |
+| Perses | Dashboards as code over the same ClickHouse, as a read-only user, with the trace view through the contributed plugin. | No | n/a | Nothing |
+| MLflow | The evaluation loop, "was it right". Reads the run's output from the Job log, never the telemetry store. | No | n/a | Nothing |
 
 The diagram in the [README](../../README.md) shows the same thing as arrows.
 
@@ -69,8 +70,9 @@ the answer is still "no".
 - **No sandbox or isolation layer.** Visibility and attribution are a different property
   from confinement. This lab shows what an agent did; it does not stop it.
 - **No visual builder.** A layer that adds nothing to governance.
-- **MLflow deferred.** The brief keeps it for the evaluation loop, "was it right" as
-  opposed to "what did it do". It is chapter 11, optional, and not on the MVP path.
+- **MLflow, kept small.** It is the evaluation loop, "was it right" as opposed to "what
+  did it do", and chapter 11 shows the shape of the loop with rule-based scores. Judgement
+  quality is not what the lab demonstrates.
 
 ## Read more
 

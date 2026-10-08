@@ -24,6 +24,10 @@ sub-question, its control, its evidence, and its status.
 
 ## The appendices
 
-- [LEARNINGS.md](../../LEARNINGS.md), the chronological log. Dead ends kept in.
-- [CONTRIBUTIONS.md](../../CONTRIBUTIONS.md), the upstream gaps, one PR filed.
-- [TODO.md](../../TODO.md), deferred work.
+- [Limitations and alternatives](../alternatives.md): where each layer fell short, what
+  has moved in the ecosystem since, and what a reader could choose instead.
+- [CONTRIBUTIONS.md](../../CONTRIBUTIONS.md), the fourteen upstream gaps, one filed as a PR.
+- [TODO.md](../../TODO.md), what was still open when the project concluded.
+- `LEARNINGS.md`, the chronological log with the dead ends kept in. It is the author's
+  working file and is not published; references to it throughout the guide point there
+  deliberately.

@@ -792,8 +792,25 @@ Carried from the project brief. These are suspected gaps to verify, not findings
 | :- | :- | :- | :- |
 | 1. Perses — ClickHouse trace query | [perses/perses#4202](https://github.com/perses/perses/issues/4202) (existing issue, commented) · [perses/plugins#813](https://github.com/perses/plugins/pull/813) | Code change, PR (ready for review); in use in this lab since 2026-09-13 | 2026-09-12 |
 
-Items 2 to 13 are recorded and not yet filed. Suggested order by value to upstream and
-by how cleanly each reproduces: 13 (guardrail content leak), 7 (span leak), 4
-(content-capture default), 12 (guardrail 500), 3 (model alias), 8 (UI reads zero), 11
-(pricing fetch), 6 (logs tab), 2 (schema contract docs), 9 (reasoning tokens), 5 and 10
-(conventions and OpenLIT MCP spans).
+## Status at the project's conclusion, 2026-10-08
+
+- **Item 1 is the one contribution filed.** [perses/plugins#813](https://github.com/perses/plugins/pull/813)
+  is open and out of draft, with three review rounds applied (last push `f297b860`,
+  2026-09-28) and CI green, waiting on the maintainers' answers on the lookup bound and
+  the variable datasource. [perses/perses#4202](https://github.com/perses/perses/issues/4202)
+  stays open. This lab runs the PR head and will keep doing so rather than track a merge
+  of unknown timing; when it merges, `apps/perses/Dockerfile` is the one place to change.
+- **Items 2 to 14 were verified in this lab and were not filed.** Each reproduces against
+  the versions in the README's stack table (OpenLIT 1.24.0 and SDK 1.45.0, LiteLLM
+  v1.100.0, Perses v0.54.0, the GenAI conventions as of September 2026) and may have been
+  fixed, renamed or made moot upstream since; check the current release before filing.
+  Anyone is welcome to file any of them, with or without reference to this repository.
+  The order that gives upstream the most for the least: 13 (guardrail content leak),
+  7 (span leak), 4 (content-capture default), 12 (guardrail 500), 3 (model alias),
+  14 (panel link needs a reload), 8 (UI reads zero), 11 (pricing fetch), 6 (logs tab),
+  2 (schema contract docs), 9 (reasoning tokens), 5 and 10 (conventions and OpenLIT MCP
+  spans).
+- **The watch-list rows that stayed open** (a handoff vocabulary, an authorization
+  vocabulary, the key on a 429, the first seconds of a pod under k3s) are limits of the
+  conventions or of the platform rather than defects to file.
+  [docs/alternatives.md](docs/alternatives.md) says what has moved on each.

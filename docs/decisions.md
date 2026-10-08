@@ -30,19 +30,6 @@ the evidence behind each; this page is the index of what was decided and why.
 | 2026-09-13 | OpenLIT `pricing_json` points at a bundled empty file | Allow the GitHub fetch | No outbound internet calls from the workload; cost is not computed here |
 | 2026-09-13 | Single-machine path deferred | Build it now | Review happens on this lab; the guide marks what is lab-specific |
 | 2026-09-13 | Demos run one at a time | Parallel | They share the Job name and clobber each other |
-
-## Assumptions
-
-- The lab's k3s enforces NetworkPolicy through its embedded controller, asynchronously
-  after pod start. Measured, not assumed, but the two-second window is specific to this
-  CNI.
-- Cost is not demonstrated anywhere. Neither route produces a non-zero cost and the
-  project's priority is attribution in tokens.
-- The principal is supplied to the run, not derived from an authentication event.
-- LiteLLM's in-memory cache is sufficient for rate limiting with one replica.
-- The `mcp` 2.x SDK propagates baggage as well as trace context in `_meta`. Verified by
-  the presence of `enduser.id` on tool-server spans, not by reading the SDK.
-
 | 2026-09-13 | Redaction masks by key pattern on the Collector, spans and logs, with `summary: debug` | Rely on SDK and gateway settings | Both settings were honoured and content still leaked via the guardrail record; only the pipeline rule caught it |
 | 2026-09-13 | Data access recorded as a per-tool resource identifier plus an argument hash | Record arguments; record nothing | Meaning without content; the hash gives identity, and is flagged as reversible for small inputs |
 | 2026-09-13 | Restricted store as a second database on the same ClickHouse, fed by tail sampling; main store keeps 100 % | Sample the main store; a separate instance | A lab must stay readable; separate access control is the property being shown, not separate hardware |
@@ -59,3 +46,16 @@ the evidence behind each; this page is the index of what was decided and why.
 | 2026-09-13 | MLflow host validation off (`serverAllowedHosts: ["*"]`) | An explicit list | The kubelet probes present the pod IP as Host and the pod restart-looped; the gateway is the only path in |
 | 2026-09-13 | MLflow on one worker with a 3 GiB limit | The chart's four workers at 2 GiB | OOM-killed before the first request |
 | 2026-09-13 | Content that the evaluation must read (the hypothesis) is read from the Job's log and stored only in MLflow | Put it on a span; skip it | "Was it right" needs the output; the telemetry store stays content-free |
+| 2026-10-08 | Concluded: the stack stays pinned to the versions it was tested with, and the findings, limits and alternatives are recorded in README.md and docs/alternatives.md | Keep tracking upstream releases and the Perses PR | The value is in the recorded experiments; what has moved since is a page a reader can check, not a rebuild |
+
+## Assumptions
+
+- The lab's k3s enforces NetworkPolicy through its embedded controller, asynchronously
+  after pod start. Measured, not assumed, but the two-second window is specific to this
+  CNI.
+- Cost is not demonstrated anywhere. Neither route produces a non-zero cost and the
+  project's priority is attribution in tokens.
+- The principal is supplied to the run, not derived from an authentication event.
+- LiteLLM's in-memory cache is sufficient for rate limiting with one replica.
+- The `mcp` 2.x SDK propagates baggage as well as trace context in `_meta`. Verified by
+  the presence of `enduser.id` on tool-server spans, not by reading the SDK.

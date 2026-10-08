@@ -2,7 +2,8 @@
 
 The four audit questions, and for each: the control that answers it, where that control
 is enforced, what evidence lands in the stored trace, and where the answer is still "no".
-This is the page to check a deployment against. Status as of 2026-09-13, end of phase 1.
+This is the page to check a deployment against. Status as of 2026-10-08, the project's
+conclusion; last verified on the single-VM rebuild of 2026-10-05.
 
 Legend: **yes** proven by a probe or a query against the store; **partial** answerable,
 with a documented gap; **no** not answerable today.

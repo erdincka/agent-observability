@@ -14,7 +14,7 @@ make evaluate N=1 ROUTE=local   # every incident in the corpus, N times, scored
 make evaluate N=1 ROUTE=remote  # the same, on the other route, to compare
 ```
 
-Then `http://mlflow.kube.local`, experiment *triage*.
+Then `http://mlflow.<GATEWAY_DOMAIN>` (the domain from `.env`), experiment *triage*.
 
 ## What you should see
 
