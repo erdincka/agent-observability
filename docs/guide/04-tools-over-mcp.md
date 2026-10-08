@@ -70,6 +70,11 @@ client, where the fault was, not on the server, where the instinct pointed.
   the shared exit stack tore down the healthy sessions. Fixed with one exit scope per
   server; `make mcp-degrade-test` covers a dead name and a black hole. Chapter 7 depends
   on it: a denied tool must look like a degraded run, not a crashed one.
+- **The tool hop bypasses the gateway.** The agents connect to the three servers directly,
+  so every tool call has a control point on its server and none in the middle. That is
+  this lab's wiring, not a limit of the gateway: LiteLLM v1.100.0 can front MCP servers
+  on an endpoint of its own, with tool access per virtual key. It was never evaluated
+  here; decisions.md (2026-10-09) records what routing through it would change.
 - The tool servers now warn when a call arrives without trace context, the useful inverse
   of the warning the propagation stubs used to emit. A root span with no parent on a tool
   server is the durable evidence that the trail broke.

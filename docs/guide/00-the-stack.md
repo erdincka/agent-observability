@@ -16,7 +16,7 @@ and a control point without telemetry is a rule nobody can prove was applied.
 | :- | :- | :- | :- | :- |
 | LangGraph workflow (`apps/workflow`) | The specimen. Three agents, one incident, real handoffs. | Yes, via the OpenLIT SDK | Yes. Injects `traceparent` on every outbound HTTP call | Nothing. It is the thing being watched. |
 | MCP tool servers (`apps/mcp`) | The agent's only route to data: metrics, git history, runbooks. | Yes, via the `mcp` SDK and OpenLIT | Yes. The `mcp` 2.x SDK carries `traceparent` in JSON-RPC `_meta` | Tool access, in chapter 7 |
-| LiteLLM gateway | The agent's only route to a model. | Yes, OTel v2 on the GenAI conventions | Yes. Joins an incoming trace rather than starting one | Identity, budgets, model access, content posture |
+| LiteLLM gateway | The agent's only route to a model. (It can also front MCP servers and A2A agents; this lab routes tool calls past it, a choice recorded in decisions.md, 2026-10-09.) | Yes, OTel v2 on the GenAI conventions | Yes. Joins an incoming trace rather than starting one | Identity, budgets, model access, content posture |
 | Ollama | The default model. CPU, 3B parameters. | No | n/a | Nothing |
 | OTel Collector (contrib) | The pipeline, and the **only write path** into storage; nothing reaches a table without its redaction. (`make restricted-promote` later copies already-stored traces between databases, chapter 8.) | n/a | n/a | Redaction, routing, archive, retention |
 | ClickHouse | Hot store for traces, metrics, logs. | No | n/a | Nothing. Storage is not policy. |

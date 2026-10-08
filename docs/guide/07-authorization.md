@@ -117,7 +117,8 @@ role, and the RBAC on `mcp-ops` limits even that to Deployments in its own names
   carry the error type; which key hit the limit is in the gateway log, not on the span.
 - **The role→tool policy and the tokens are static.** A ConfigMap and a Secret. The
   enterprise shape is a policy engine and a signed workload identity; the spans would be
-  identical.
+  identical. The gateway already deployed could also have held this policy, per virtual
+  key, on its own MCP endpoint; the lab never tried it (decisions.md, 2026-10-09).
 - **The OpenLIT SDK phones home at startup** to fetch a pricing table from GitHub. The
   egress policy blocks it, which is how it was noticed. Now pointed at a bundled file.
   CONTRIBUTIONS item 11.

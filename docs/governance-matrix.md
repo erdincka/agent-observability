@@ -37,7 +37,7 @@ with a documented gap; **no** not answerable today.
 | :- | :- | :- | :- | :- | :- |
 | Which tool, which backend | Tool server spans and their outbound HTTP spans | Tool server | `tools/call <name>` → `GET` | yes | |
 | What the tool was asked for | A resource identifier and an argument hash, never the arguments | Tool server | `agent_obs.access.resource`, `agent_obs.access.args_sha256` on every tool span | partial | Local names; the hash is reversible for small argument spaces; the resource string carries the meaning |
-| Was the tool permitted for this agent | Role→tool policy on a bearer token | Tool server | `authz.decision`, `authz.role`, `authz.tool` on every tool span; status ERROR on deny | yes | Static policy and tokens; local attribute names |
+| Was the tool permitted for this agent | Role→tool policy on a bearer token | Tool server | `authz.decision`, `authz.role`, `authz.tool` on every tool span; status ERROR on deny | yes | Static policy and tokens; local attribute names. The gateway's own MCP endpoint, which could hold this policy per virtual key, was not used (decisions.md, 2026-10-09) |
 | Was the model permitted for this key | Model allow-list on the virtual key | Gateway | HTTP 403 on the gateway span; `triage.denied_by=gateway:model_access` on the agent span | yes | |
 | Was the call within quota | rpm limit on the virtual key | Gateway | 429 spans with `error.type=ProxyException`; run duration | yes | Which key hit the limit is in the log, not on the 429 span |
 | Was the content permitted to reach a model | Pre-call guardrail | Gateway | `execute_guardrail <name>` span with `litellm.guardrail.status` | yes | Only with `GuardrailRaisedException` and the logging decorator; otherwise a 500 and no span |

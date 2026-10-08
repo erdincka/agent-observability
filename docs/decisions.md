@@ -8,7 +8,7 @@ the evidence behind each; this page is the index of what was decided and why.
 | 2026-09-09 | The Collector is the only writer to ClickHouse; OpenLIT reads only | OpenLIT's bundled collector and ClickHouse | Governance controls live in the pipeline; two writers means no control point |
 | 2026-09-09 | Every model call goes through LiteLLM; the workflow names routes, never models | Direct provider clients | One place to observe and later enforce model access |
 | 2026-09-09 | Local Ollama is the committed default; the external route is opt-in | External model as default | The self-hosted claim has to be true of the repository as published |
-| 2026-09-09 | MCP servers are separate pods over streamable HTTP | stdio subprocesses | A network hop makes propagation observable as two services in one trace |
+| 2026-09-09 | MCP servers are separate pods over streamable HTTP, and the agents connect to them directly | stdio subprocesses; routing tool calls through LiteLLM's MCP gateway, which v1.100.0 already shipped | A network hop makes propagation observable as two services in one trace. The gateway option was not considered at the time and never evaluated; see 2026-10-09 |
 | 2026-09-09 | Two namespaces, platform and app | One | The governance boundary runs along it |
 | 2026-09-09 | MinIO on a VM outside the cluster | In-cluster | The durable tier cannot depend on the cluster it backs |
 | 2026-09-09 | Content capture off at every layer, verified by grep | Trust the settings | A posture that depends on a default is not a posture |
@@ -46,6 +46,7 @@ the evidence behind each; this page is the index of what was decided and why.
 | 2026-09-13 | MLflow host validation off (`serverAllowedHosts: ["*"]`) | An explicit list | The kubelet probes present the pod IP as Host and the pod restart-looped; the gateway is the only path in |
 | 2026-09-13 | MLflow on one worker with a 3 GiB limit | The chart's four workers at 2 GiB | OOM-killed before the first request |
 | 2026-09-13 | Content that the evaluation must read (the hypothesis) is read from the Job's log and stored only in MLflow | Put it on a span; skip it | "Was it right" needs the output; the telemetry store stays content-free |
+| 2026-10-09 | Recorded, not changed: tool calls bypass the gateway although LiteLLM v1.100.0 can front MCP servers and A2A agents | Re-wire chapter 4 through the gateway's MCP endpoint and hold the role→tool policy on the virtual keys | Noticed while concluding, so recorded rather than left implicit. Read in the v1.100.0 source: the gateway's MCP span records the caller's `traceparent` as a span link, not as its parent, and discards the caller's baggage so a client cannot assert its own identity; the single-trace evidence of chapters 6 and 9 would change shape. Worth an experiment; docs/alternatives.md weighs it |
 | 2026-10-08 | Concluded: the stack stays pinned to the versions it was tested with, and the findings, limits and alternatives are recorded in README.md and docs/alternatives.md | Keep tracking upstream releases and the Perses PR | The value is in the recorded experiments; what has moved since is a page a reader can check, not a rebuild |
 
 ## Assumptions

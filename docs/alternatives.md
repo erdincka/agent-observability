@@ -30,7 +30,7 @@ asking the four questions in their own words.
 | Daily dashboards and trace view | Perses, with a trace-query plugin written for it | Grafana over the same ClickHouse, or a ClickHouse-native UI; Perses if the point is to contribute |
 | Per-trace GenAI view | OpenLIT UI | A UI that reads the conventions as published, chosen by licence and content posture |
 | Instrumentation | OpenLIT SDK and the `mcp` SDK | The upstream OpenTelemetry instrumentations as they mature; a library-only SDK meanwhile |
-| Model gateway | LiteLLM | A gateway that also fronts MCP, so tool calls pass a control point too |
+| Model gateway | LiteLLM, for model calls only | The same gateway's MCP endpoint, or one built for MCP and agent traffic, so tool calls pass a control point too |
 | Tool authorization | Static bearer tokens, a ConfigMap policy | MCP's OAuth 2.1 model, a policy engine, a workload identity |
 | Runtime | Plain Jobs, no isolation | A Sandbox with an identity the spans can carry |
 | Content control | Deny-list redaction in the Collector | An allow-list, enforced by the pipeline and the table schema |
@@ -123,12 +123,28 @@ a guardrail that raises the wrong exception yields a 500 and no span; a guardrai
 success record put full prompts on spans under `no_content`. *Limits of the design*: the
 key that hit a rate limit is only in the log; the gateway's housekeeping writes about
 1,150 spans a day with no agent running; rate limiting relies on one replica's memory.
-And the structural one from the watch list: MCP calls never pass through the gateway, so
-the tool hop has a control point on each server and none in the middle.
+*Limit of the design, recorded late.* The agents connect to the tool servers directly,
+so the gateway saw model calls only and the tool hop had a control point on each server
+and none in the middle. That was the lab's wiring, not the gateway's limit: LiteLLM
+v1.100.0, the version pinned here, already ships an MCP gateway (servers declared in its
+config, per-key and per-team tool access, OAuth to upstream servers, guardrails on tool
+calls, cost tracking) and A2A agent endpoints. Neither was evaluated, and the omission
+was noticed only at the conclusion (decisions.md, 2026-10-09).
 
 **Alternatives.**
 
-- **A gateway that fronts model, MCP and agent-to-agent traffic in one data plane**:
+- **The MCP endpoint of the gateway already deployed.** The agents would call one
+  endpoint with their virtual key, and chapter 7's role-to-tool policy would become the
+  key's tool permissions, held where the model permissions already are. Two things read
+  in the v1.100.0 source would change the lab's evidence. Its MCP span records the
+  caller's `traceparent` as a span *link*, never as the parent, so a tool call lands in a
+  second trace joined by a link rather than nested under the agent's span; chapter 9's
+  dangling-parent check and the Gantt view would have to follow links. And it discards
+  the caller's W3C baggage on purpose, because a shared gateway cannot let a client assert
+  its own identity attribution. That second point is chapter 6's "credential, not
+  assertion" applied harder than this lab applied it, and the best reason to run the
+  experiment.
+- **A gateway built for model, MCP and agent-to-agent traffic in one data plane**:
   agentgateway (Linux Foundation, now under the Agentic AI Foundation), or the Envoy
   family (Envoy AI Gateway, kgateway) on the same Gateway API the lab already uses for
   its UIs. Tool authorization becomes a gateway decision with a gateway span, and the
@@ -165,7 +181,8 @@ Foundation since December 2025.
 - **The OAuth 2.1 model from the specification** instead of static bearer tokens; the
   per-role token becomes a scoped token from the organisation's issuer.
 - **An MCP gateway** in front of the servers, so the allow/deny decision is made once and
-  recorded once, and the servers see only authorised calls.
+  recorded once, and the servers see only authorised calls. The one deployed here could
+  have been it (above); a dedicated one is the other option.
 - **A policy engine** (OPA Rego, Cedar) instead of the JSON file, with the same span
   attributes. The spans in chapter 7 would be identical, which was the design's point.
 - **A workload identity** (SPIFFE/SPIRE, or a Sandbox's identity, below) instead of a
@@ -187,7 +204,9 @@ vocabulary; the three handoffs in every run are state transfers nobody can see a
 A2A reached v1.0 under the Linux Foundation in spring 2026. A handoff over A2A is a
 request with a span, which is what the conventions still lack for in-process handoffs.
 Kubernetes-native agent frameworks exist: kagent (CNCF sandbox since May 2025) declares
-agents, tools and models as custom resources with OpenTelemetry tracing built in.
+agents, tools and models as custom resources with OpenTelemetry tracing built in. And the
+gateway this lab runs can already register and front A2A agents, which the lab did not
+try.
 
 **Alternatives.**
 
@@ -353,7 +372,8 @@ a credential for enforcement. Dashboards and policies as files in the repository
 receipt. The separation between "what did it do" and "was it right".
 
 **Change.** A dashboard tool that reads ClickHouse traces without a plugin, unless
-contributing is the goal. A gateway that sees MCP traffic as well as model traffic. The
+contributing is the goal. Tool calls through a gateway too, starting with the MCP endpoint
+of the one already deployed. The
 MCP specification's own authorization instead of bearer tokens. The workflow inside a
 Sandbox, with the agent's identity derived from it. An allow-list for attributes, enforced
 by the pipeline and the table. Object lock on the archive from the first day. An LLM judge
@@ -371,6 +391,7 @@ claims above are limited to what more than one source agreed on.
 - Agent Sandbox: [Running Agents on Kubernetes with Agent Sandbox](https://kubernetes.io/blog/2026/03/20/running-agents-on-kubernetes-with-agent-sandbox), Kubernetes blog, 2026-03-20; project site at agent-sandbox.sigs.k8s.io.
 - Agent Substrate: [How Google Agent Substrate works](https://www.solo.io/topics/ai-infrastructure/how-google-agent-substrate-works) (vendor); [Agent Substrate: zero-idle Kubernetes for stateful AI agents](https://www.fratepietro.com/2026/agent-substrate-zero-idle-kubernetes/).
 - kagent: [CNCF project page](https://www.cncf.io/projects/kagent/).
+- LiteLLM MCP gateway and A2A endpoints at the pinned version: the [v1.100.0 release notes](https://github.com/BerriAI/litellm/releases/tag/v1.100.0) (2026-09-06), including [BerriAI/litellm#38317](https://github.com/BerriAI/litellm/pull/38317), which anchors MCP tool-call spans to the gateway's own trace and links the client's context; the source tree at that tag, `litellm/proxy/_experimental/mcp_server/` (`server.py`, `_mcp_meta_trace_carrier`) and `litellm/proxy/a2a/`; current docs at [docs.litellm.ai/docs/mcp](https://docs.litellm.ai/docs/mcp).
 - agentgateway: [Linux Foundation announcement](https://linuxfoundation.org/press/linux-foundation-welcomes-agentgateway-project-to-accelerate-ai-agent-adoption-while-maintaining-security-observability-and-governance); [Designing agentgateway](https://aaif.io/blog/designing-agentgateway-a-unified-high-performance-gateway-for-ai-and-api-traffic) (Agentic AI Foundation).
 - MCP 2026-07-28 revision: [MCP in the enterprise: specification 2026-07-28 and security](https://wz-it.com/en/knowledge/ki/mcp-model-context-protocol/); [MCP authorization spec 2026-07-28: what changed](https://ssojet.com/blog/mcp-authorization-spec-2026-07-28-what-changed) (vendor). Primary: the specification and changelog at modelcontextprotocol.io.
 - A2A: [Linux Foundation launches the Agent2Agent protocol project](https://linuxfoundation.org/press/linux-foundation-launches-the-agent2agent-protocol-project-to-enable-secure-intelligent-communication-between-ai-agents), 2025-06-23.
