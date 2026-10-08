@@ -42,18 +42,18 @@ goes missing later, this answers "pipeline or application?" in about ten seconds
 
 ## Reaching the OpenLIT UI
 
-The `platform` Gateway serves `*.kube.local` at `GATEWAY_IP` (from `.env`). Either add a
-hosts entry:
+The `platform` Gateway serves `*.<GATEWAY_DOMAIN>` at `GATEWAY_IP` (both from `.env`; the
+domain defaults to `kube.local`). Either add a hosts entry:
 
 ```
-<GATEWAY_IP>  openlit.kube.local
+<GATEWAY_IP>  openlit.<GATEWAY_DOMAIN>
 ```
 
 or port-forward: `kubectl port-forward -n agent-obs-platform svc/openlit 3000:3000`.
 
 ## Reaching the LiteLLM UI
 
-Same `platform` Gateway. Add a hosts entry for `litellm.kube.local` alongside the OpenLIT
+Same `platform` Gateway. Add a hosts entry for `litellm.<GATEWAY_DOMAIN>` alongside the OpenLIT
 one, then log in with `LITELLM_UI_USERNAME` / `LITELLM_UI_PASSWORD` from `.env` — not the
 master key, which is deliberately no longer a UI password.
 

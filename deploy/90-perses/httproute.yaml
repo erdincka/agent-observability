@@ -1,5 +1,6 @@
 # Exposes Perses through the pre-existing Envoy Gateway, like the other UIs.
-# Reachable at http://perses.kube.local once that name resolves to the gateway
+# The domain is GATEWAY_DOMAIN in .env (default kube.local), filled in by make.
+# Reachable at http://perses.<GATEWAY_DOMAIN> once that name resolves to the gateway
 # address (GATEWAY_IP in .env).
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
@@ -12,7 +13,7 @@ spec:
       namespace: gateway
       sectionName: web
   hostnames:
-    - perses.kube.local
+    - perses.__GATEWAY_DOMAIN__
   rules:
     - matches:
         - path: { type: PathPrefix, value: / }

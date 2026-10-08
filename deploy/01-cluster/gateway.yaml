@@ -1,6 +1,7 @@
 # The Gateway every HTTPRoute in deploy/ attaches to: `platform` in namespace
-# `gateway`, one HTTP listener named `web` on *.kube.local, routes accepted from
-# every namespace. The same shape the original lab had (there it was created by
+# `gateway`, one HTTP listener named `web` on *.<GATEWAY_DOMAIN> (from .env;
+# kube.local by default), routes accepted from every namespace. Rendered and
+# applied by prereqs.sh. The same shape the original lab had (there it was created by
 # other work); here it is what `make cluster-prereqs` creates.
 #
 # On a single-node k3s the Service Envoy Gateway creates for it is type
@@ -29,7 +30,7 @@ spec:
     - name: web
       protocol: HTTP
       port: 80
-      hostname: "*.kube.local"
+      hostname: "*.__GATEWAY_DOMAIN__"
       allowedRoutes:
         namespaces:
           from: All

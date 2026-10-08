@@ -46,6 +46,9 @@ while IFS= read -r f; do
     deploy/70-workflow/*) continue ;;
     deploy/80-mcp/policy.json) continue ;;
     deploy/01-cluster/*) continue ;;   # prerequisites, not the lab: Helm releases checked nowhere here
+    */httproute.yaml)
+      sed -e "s|__GATEWAY_DOMAIN__|${GATEWAY_DOMAIN:-kube.local}|g" "$f" > "$TMP/route.yaml"
+      report "$f  (*.${GATEWAY_DOMAIN:-kube.local})" kubectl diff -f "$TMP/route.yaml" ;;
     deploy/85-netpol/policies.yaml)
       sed -e "s|__K8S_API_IP__|${K8S_API_IP:-${K3S_VM_IP:-}}|g" "$f" > "$TMP/policies.yaml"
       report "$f" kubectl diff -f "$TMP/policies.yaml" ;;

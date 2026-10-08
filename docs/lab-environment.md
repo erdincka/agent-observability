@@ -21,7 +21,7 @@ on 2026-10-05.
 | StorageClass | `local-path`, `WaitForFirstConsumer`, `Delete`, no expansion | same | — |
 | CloudNativePG operator | 1.30.0, pre-installed | 1.30.0, `make cluster-prereqs` | — |
 | Prometheus | kube-prometheus-stack in `observability`, pre-existing | kube-prometheus-stack 91.9.0, Grafana and Alertmanager off, `make cluster-prereqs` | — |
-| Envoy Gateway | Gateway `platform` at a MetalLB address, `*.kube.local` | Gateway `platform` at the VM's address (k3s ServiceLB), `*.kube.local` | `GATEWAY_IP` |
+| Envoy Gateway | Gateway `platform` at a MetalLB address, `*.kube.local` | Gateway `platform` at the VM's address (k3s ServiceLB), `*.zbook.local` | `GATEWAY_IP`, `GATEWAY_DOMAIN` |
 | Container registry | in-cluster, plain HTTP | a Docker host on the LAN, plain HTTP | `REGISTRY` |
 | Build host | Docker context `pve`, amd64, over SSH | Docker context `zbook`, amd64, over SSH | `DOCKER_BUILD_CONTEXT` |
 | kubeconfig | the workstation's default | `./kubeconfig-<name>`, written by `make k3s-vm` | `KUBECONFIG` |
@@ -70,16 +70,19 @@ deployment order and why it matters.
 
 ## Reaching the UIs
 
-Four UIs, all through the `platform` Gateway at `GATEWAY_IP`, all `*.kube.local`:
+Four UIs, all through the `platform` Gateway at `GATEWAY_IP`, all under `*.GATEWAY_DOMAIN`
+(`kube.local` on the original lab, `zbook.local` on the single-VM one; one domain per cluster so
+two labs on one network do not collide):
 
 | UI | Hostname | What it shows | Login |
 | :- | :- | :- | :- |
-| OpenLIT | `openlit.kube.local` | per-trace GenAI view (chapters 3 to 5) | its own admin |
-| LiteLLM | `litellm.kube.local` | keys, teams, spend, guardrails (chapters 6 and 7) | `LITELLM_UI_USERNAME` / `LITELLM_UI_PASSWORD` from `.env` |
-| Perses | `perses.kube.local` | the four dashboards and the trace view (chapter 10) | none |
-| MLflow | `mlflow.kube.local` | the evaluation runs (chapter 11) | none |
+| OpenLIT | `openlit.<domain>` | per-trace GenAI view (chapters 3 to 5) | its own admin |
+| LiteLLM | `litellm.<domain>` | keys, teams, spend, guardrails (chapters 6 and 7) | `LITELLM_UI_USERNAME` / `LITELLM_UI_PASSWORD` from `.env` |
+| Perses | `perses.<domain>` | the four dashboards and the trace view (chapter 10) | none |
+| MLflow | `mlflow.<domain>` | the evaluation runs (chapter 11) | none |
 
-Add hosts entries pointing at `GATEWAY_IP`, or `kubectl port-forward` the Services
+Add a wildcard DNS record for `*.<domain>` pointing at `GATEWAY_IP` (or one hosts entry per
+UI), or `kubectl port-forward` the Services
 (`openlit:3000`, `litellm:4000`, `perses:8080`, `mlflow:80`, all in `agent-obs-platform`).
 
 ## Reproducibility, as it stands

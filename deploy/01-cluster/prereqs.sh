@@ -6,7 +6,7 @@
 # not, so this is the honest list — each one is referenced by a manifest here:
 #
 #   Envoy Gateway        the HTTPRoutes attach to Gateway `platform` in
-#                        namespace `gateway`, listener `web`, *.kube.local
+#                        namespace `gateway`, listener `web`, *.<GATEWAY_DOMAIN>
 #   CloudNativePG        the three `Cluster` manifests (workflow-db, litellm-db,
 #                        mlflow-db)
 #   kube-prometheus-stack  mcp-metrics queries
@@ -24,6 +24,7 @@ cd "$(dirname "$0")/../.."
 ENVOY_GATEWAY_VERSION="${ENVOY_GATEWAY_VERSION:-v1.9.2}"
 CNPG_CHART_VERSION="${CNPG_CHART_VERSION:-0.29.0}"            # operator 1.30.0, as on the original lab
 KPS_CHART_VERSION="${KPS_CHART_VERSION:-91.9.0}"
+GATEWAY_DOMAIN="${GATEWAY_DOMAIN:-kube.local}"
 
 say() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 
@@ -50,11 +51,11 @@ helm upgrade --install eg oci://docker.io/envoyproxy/gateway-helm \
   --namespace envoy-gateway-system --create-namespace \
   --wait --timeout 5m
 kubectl wait --for=condition=Available deployment/envoy-gateway -n envoy-gateway-system --timeout=180s >/dev/null
-kubectl apply -f deploy/01-cluster/gateway.yaml
+sed "s|__GATEWAY_DOMAIN__|$GATEWAY_DOMAIN|g" deploy/01-cluster/gateway.yaml | kubectl apply -f -
 echo "waiting for Gateway platform to be programmed"
 kubectl wait --for=condition=Programmed gateway/platform -n gateway --timeout=180s >/dev/null
 addr=$(kubectl get gateway platform -n gateway -o jsonpath='{.status.addresses[0].value}')
-echo "Gateway platform: ${addr:-no address yet} (*.kube.local)"
+echo "Gateway platform: ${addr:-no address yet} (*.$GATEWAY_DOMAIN)"
 if [ -n "${GATEWAY_IP:-}" ] && [ -n "$addr" ] && [ "$addr" != "$GATEWAY_IP" ]; then
   echo "WARNING: .env says GATEWAY_IP=$GATEWAY_IP but the Gateway is at $addr — fix .env" >&2
 fi
@@ -80,4 +81,5 @@ kubectl get svc kube-prometheus-stack-prometheus -n observability -o name >/dev/
 say "Ready"
 kubectl get gateway -n gateway
 echo
+echo "DNS: point *.$GATEWAY_DOMAIN at ${addr:-$GATEWAY_IP} (a wildcard record, or one hosts entry per UI)"
 echo "Next: make step1"

@@ -25,13 +25,14 @@ components (the original lab did), skip this directory and set `KUBECONFIG`,
 | `REGISTRY` | The registry the node pulls from, plain HTTP. Written into `/etc/rancher/k3s/registries.yaml` |
 | `KUBECONFIG` | Where `make k3s-vm` writes the kubeconfig, and what every `kubectl`/`helm` in the Makefile uses |
 | `GATEWAY_IP` | The address the `platform` Gateway answers on. On a single node, the VM's address (k3s ServiceLB) |
+| `GATEWAY_DOMAIN` | The domain the Gateway listens on (`*.<domain>`) and the UIs are routed under; `kube.local` by default, one per cluster. Point wildcard DNS at `GATEWAY_IP` |
 | `K8S_API_IP` | Where the API server is reached from a pod after NAT: the control-plane node. Used by the mcp-ops NetworkPolicy |
 
 ## What `cluster-prereqs` installs, and why each
 
 | Component | Version | Referenced by |
 | :- | :- | :- |
-| Envoy Gateway | v1.9.2, GatewayClass `envoy`, Gateway `platform`/`web` on `*.kube.local` | every `httproute.yaml` |
+| Envoy Gateway | v1.9.2, GatewayClass `envoy`, Gateway `platform`/`web` on `*.<GATEWAY_DOMAIN>` | every `httproute.yaml` (`make routes` re-applies them) |
 | CloudNativePG | chart 0.29.0, operator 1.30.0 | the three `Cluster` manifests |
 | kube-prometheus-stack | chart 91.9.0, Grafana and Alertmanager off | `mcp-metrics` (`PROMETHEUS_URL`), the `mcp-metrics-egress` NetworkPolicy |
 

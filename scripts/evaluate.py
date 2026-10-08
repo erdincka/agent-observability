@@ -31,7 +31,8 @@ different evidence and both can be answered per run:
   confident_cause_without_evidence     a stated cause on a run with no evidence
 
 MLflow is reached through the lab gateway (GATEWAY_IP in .env) with a Host
-header; set MLFLOW_URL and MLFLOW_HOST to reach it another way.
+header (mlflow.<GATEWAY_DOMAIN>); set MLFLOW_URL and MLFLOW_HOST to reach it
+another way.
 """
 
 from __future__ import annotations
@@ -47,7 +48,7 @@ import urllib.error
 import urllib.request
 
 MLFLOW_URL = os.getenv("MLFLOW_URL") or f"http://{os.getenv('GATEWAY_IP', '127.0.0.1')}"
-MLFLOW_HOST = os.getenv("MLFLOW_HOST", "mlflow.kube.local")
+MLFLOW_HOST = os.getenv("MLFLOW_HOST") or f"mlflow.{os.getenv('GATEWAY_DOMAIN', 'kube.local')}"
 EXPERIMENT = "triage"
 
 EXPECTED_RUNBOOK = {

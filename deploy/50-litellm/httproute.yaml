@@ -1,9 +1,10 @@
 # Exposes the LiteLLM UI through the Envoy Gateway (pre-existing on the original
 # lab, installed by `make cluster-prereqs` on the single-VM path) rather than
 # allocating another LoadBalancer address. The `platform` Gateway listens on
-# *.kube.local and accepts routes from all namespaces.
+# *.<GATEWAY_DOMAIN> and accepts routes from all namespaces.
 #
-# Reachable at http://litellm.kube.local once that name resolves to the
+# The domain is GATEWAY_DOMAIN in .env (default kube.local), filled in by make.
+# Reachable at http://litellm.<GATEWAY_DOMAIN> once that name resolves to the
 # gateway address (GATEWAY_IP in .env).
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
@@ -16,7 +17,7 @@ spec:
       namespace: gateway
       sectionName: web
   hostnames:
-    - litellm.kube.local
+    - litellm.__GATEWAY_DOMAIN__
   rules:
     - matches:
         - path: { type: PathPrefix, value: / }

@@ -38,6 +38,10 @@ export REGISTRY DOCKER_BUILD_CONTEXT
 # original lab's values as defaults.
 MODEL_TIMEOUT  ?= $(or $(call envval,MODEL_TIMEOUT),300)
 TRIAGE_TIMEOUT ?= $(or $(call envval,TRIAGE_TIMEOUT),900)
+# The domain the UIs are served under through the platform Gateway
+# (*.<GATEWAY_DOMAIN>); every HTTPRoute under deploy/ is rendered with it.
+GATEWAY_DOMAIN ?= $(or $(call envval,GATEWAY_DOMAIN),kube.local)
+apply_route = sed 's|__GATEWAY_DOMAIN__|$(GATEWAY_DOMAIN)|g' $(1) | kubectl apply -f -
 
 # Immutable image tags: the last commit that touched each image's inputs, with
 # `-dirty` appended when those inputs have uncommitted changes. Recursive (=), so
@@ -79,9 +83,17 @@ cluster: k3s-vm cluster-prereqs ## A fresh single-VM cluster, ready for step 1
 
 .PHONY: cluster-status
 cluster-status: ## Which cluster make is talking to, and is it there
-	@echo "KUBECONFIG=$${KUBECONFIG:-<default>}"
+	@echo "KUBECONFIG=$${KUBECONFIG:-<default>}  GATEWAY_DOMAIN=$(GATEWAY_DOMAIN)"
 	@kubectl get nodes -o wide
 	@kubectl get gateway -n gateway 2>/dev/null || echo "no platform Gateway: make cluster-prereqs"
+
+.PHONY: routes
+routes: ## (Re)apply the four UI HTTPRoutes under *.GATEWAY_DOMAIN, without redeploying anything
+	$(call apply_route,deploy/30-openlit/httproute.yaml)
+	$(call apply_route,deploy/50-litellm/httproute.yaml)
+	$(call apply_route,deploy/90-perses/httproute.yaml)
+	$(call apply_route,deploy/95-mlflow/httproute.yaml)
+	@kubectl get httproute -n $(PLATFORM_NS)
 
 # ---------------------------------------------------------------- step 0 -----
 # MinIO lives outside the cluster, so it comes before the cluster's own steps.
@@ -217,7 +229,7 @@ openlit: ## Deploy the OpenLIT UI over our ClickHouse
 		--namespace $(PLATFORM_NS) \
 		--values deploy/30-openlit/values.yaml \
 		--wait --timeout 5m
-	kubectl apply -f deploy/30-openlit/httproute.yaml
+	$(call apply_route,deploy/30-openlit/httproute.yaml)
 
 .PHONY: openlit-logs
 openlit-logs: ## Tail OpenLIT
@@ -256,7 +268,7 @@ litellm: env-check secrets litellm-db ## Render config and deploy the LiteLLM ga
 		--dry-run=client -o yaml | kubectl apply -f -
 	@sum=$$(./scripts/litellm-checksum.sh); \
 	sed "s/REPLACED_AT_DEPLOY/$$sum/" deploy/50-litellm/litellm.yaml | kubectl apply -f -
-	kubectl apply -f deploy/50-litellm/httproute.yaml
+	$(call apply_route,deploy/50-litellm/httproute.yaml)
 	kubectl rollout status deployment/litellm -n $(PLATFORM_NS) --timeout=300s
 
 .PHONY: litellm-keys
@@ -446,7 +458,7 @@ perses: secrets ch-perses-user perses-dashboards ## Deploy Perses (chapter 10)
 		--namespace $(PLATFORM_NS) \
 		--values /tmp/perses-values.rendered.yaml \
 		--wait --timeout 5m
-	kubectl apply -f deploy/90-perses/httproute.yaml
+	$(call apply_route,deploy/90-perses/httproute.yaml)
 
 .PHONY: perses-logs
 perses-logs: ## Tail Perses
@@ -473,7 +485,7 @@ mlflow: env-check minio-secret mlflow-db ## Deploy MLflow, the evaluation loop (
 		--values /tmp/mlflow-values.rendered.yaml \
 		--set backendStore.postgres.user="$$u" --set backendStore.postgres.password="$$p" \
 		--wait --timeout 10m
-	kubectl apply -f deploy/95-mlflow/httproute.yaml
+	$(call apply_route,deploy/95-mlflow/httproute.yaml)
 
 .PHONY: evaluate
 evaluate: env-check ## Run the corpus N times and score each run in MLflow: make evaluate N=1 ROUTE=local
