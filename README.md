@@ -1,5 +1,10 @@
 # Enterprise Agent Observability & Governance Lab
 
+> **Status: concluded 2026-10-08.** The stack stays pinned to the versions it was tested
+> with and is not tracked further. [Where it ended](#where-it-ended) has the findings;
+> [Limitations and alternatives](docs/alternatives.md) says what fell short, what has
+> moved in the ecosystem since, and what to weigh instead of copying this stack.
+
 A self-hosted playground and a guide. A small multi-agent workflow, four MCP tool servers
 and a model gateway, instrumented end to end with the OpenTelemetry GenAI semantic
 conventions on Kubernetes, built to work out one pattern: how an enterprise that cannot
@@ -62,21 +67,78 @@ The stack I landed on:
 
 Along the way, I discovered features missing in some of these tools (which I've logged separately). Instead of just working around them, I decided to treat those gaps as **contribution opportunities**. I'm not claiming deep expertise here; I'm trying to add or fix what's missing with help from AI-assisted development and the existing communities around these projects.
 
-## Where it stands
+## Where it ended
 
-**All three phases are built.** Phase 1, observable: a complete trace spans agent → MCP
-tool → gateway → model and the layers reconcile. Phase 2, governable: identity on every
-span, six enforced controls each leaving a span, content redaction on the only write path,
+**All three phases were built, and the lab was rebuilt twice from the repository**: torn
+down and rebuilt onto the same cluster on 2026-09-23, and built onto a second machine
+with none of its prerequisites on 2026-10-05. Phase 1, observable: one trace spans agent →
+MCP tool → gateway → model and the layers reconcile. Phase 2, governable: identity on
+every span, six enforced controls each leaving a span, redaction on the only write path,
 a restricted store for flagged traces, an S3 archive and a cold tier. Phase 3, public:
 four Perses dashboards as code with a trace view through the plugin this project
-contributed upstream, an MLflow evaluation loop, and this guide. The
-[governance matrix](docs/governance-matrix.md) says where each question stands, row by
-row, including the two rows that remain "partial" by design.
+contributed upstream, an MLflow evaluation loop, and the [guide](docs/guide/README.md).
 
-The thirteen upstream gaps this produced are in [CONTRIBUTIONS.md](CONTRIBUTIONS.md), one
-of them already a pull request that this lab now runs. Every finding along the way, in
-order and with the failures kept in, is in `LEARNINGS.md` — the author's working log, which
-stays private; references to it throughout this repository point there deliberately.
+### The hypothesis, and where it held
+
+The claim under test was that a platform can produce **audit-grade agent traces without
+recording the content**. It held for three of the four questions in full and for the
+fourth with two limits that are honest rather than fixable here. The
+[governance matrix](docs/governance-matrix.md) has every sub-question; this is the
+summary.
+
+| Question | Answer at conclusion | What still reads "partial" |
+| :- | :- | :- |
+| What did the agent do? | Yes: which agents in what order, which tools, the model that actually served each call, tokens and reasoning per agent, outcome, duration, and whether it was repeated | The real model is under a vendor attribute, not the portable one (CONTRIBUTIONS 3); reasoning counts come from the client, not the gateway (9) |
+| On whose behalf? | Yes, on every span, and enforced on a credential at the gateway and at each tool server, not on the span's word | The principal is asserted by the run, not derived from an authentication event |
+| With what data access? | Yes for the tool, the resource, the decision, the model, the quota, the content posture and the network; the arguments stay out by design | The record is a resource identifier plus an argument hash, and a small argument space makes the hash reversible |
+| Can you prove it later? | Yes: every run complete, reconciled across layers, content-free, routed and fingerprinted by one command; seven-year TTL on the cold tier; every batch in a versioned archive | The digest lives in a local file, not under object lock; log records and metrics are not covered |
+
+**What worked, and why.** Almost everything that worked traces back to two decisions
+made before anything was deployed. *One write path*: the Collector is the only route into
+storage, so redaction, routing and retention had a place to be enforced. *Verify what is
+stored*: every content claim is a grep over stored attributes, every completeness claim
+is a count of spans whose parent never arrived, and every reconciliation is two sums that
+must agree. Those two habits found the span leak that made a 76-span trace look complete,
+the guardrail that put full prompts on a `no_content` gateway, and the tail-sampling
+window that could not outlast an agent run. Trace context crossed both hops without a
+line of propagation code, because the gateway joins an incoming trace and the `mcp` SDK
+carries context in JSON-RPC `_meta`. Identity as baggage for attribution and a credential
+for enforcement, denials recorded as spans rather than raised as errors, and the receipt
+as one command a reviewer runs without the author, all did what they were built to do.
+
+**What did not, and it was nearly always the same failure.** Nothing failed loudly. The
+failures were confident, plausible, wrong answers from components that were otherwise
+working: doubled token counts, a leaked span, a reasoning model truncating mid-thought
+and the next agent treating the fragment as an answer, a UI reading zero for a compliant
+producer, and on the last day a run whose three agents all read `ok` while its answer
+was wrong. The outcome column measures the machinery; whether the answer was right is a
+different question with a different instrument, which is why evaluation is scored
+separately and why this guide keeps the two apart.
+
+### Where the gaps were, and what to weigh instead
+
+Each row is a gap this lab hit, what it did about it, and the alternative a reader should
+weigh. The long form, with what has moved in the ecosystem since and the trade-offs, is
+[docs/alternatives.md](docs/alternatives.md).
+
+| Layer | Gap found here | What the lab did | Alternative to weigh |
+| :- | :- | :- | :- |
+| Trace view over ClickHouse | Perses had no trace query for its ClickHouse datasource, so the Gantt and trace panels had nothing to read | Wrote the plugin ([perses/plugins#813](https://github.com/perses/plugins/pull/813), open, three review rounds applied) and built the Perses image from the PR head | Grafana's ClickHouse data source reads `otel_traces` with a built-in trace view; a ClickHouse-native UI over the same tables; Jaeger v2, whose ClickHouse storage is stable since v2.21 but uses its own schema; Tempo only if trace-ID lookup is all that is needed |
+| GenAI UI and SDK | OpenLIT's UI read pre-convention names and showed zero tokens, its logs tab shipped broken, its SDK captured content by default and leaked the agent → model span | Guarded the leak locally, read ClickHouse directly, moved the daily view to Perses | A library-only instrumentation, or the upstream OpenTelemetry instrumentations as they mature; a UI chosen for its licence and its behaviour under a no-content posture |
+| Model gateway | The portable model attribute carried the routing alias, no reasoning tokens, a guardrail that returned a 500 with no span, and a guardrail record that leaked full prompts past `no_content` | Read the vendor attribute, wrapped the guardrail correctly, caught the leak with redaction on the pipeline | A gateway that fronts MCP and agent traffic as well as model calls, so the tool hop has a control point in the middle; keep the pipeline control whichever gateway is chosen |
+| Tool authorization | Static bearer tokens and a ConfigMap policy; identity in baggage is an assertion; no convention for a decision | Enforced on the credential, recorded the decision on the server's span under local names | MCP's 2026-07-28 OAuth 2.1 model, an MCP gateway, a policy engine, a workload identity |
+| Conventions | No vocabulary for a handoff, an outcome, an authorization decision or a non-content data-access record; client and gateway spans double-count | Standard names where they exist, local names flagged as local | Track the GenAI conventions, still in Development with no release; A2A gives a handoff a protocol and so a span |
+| Runtime | No isolation; identity is a string the Job was given; k3s leaves a pod's first seconds unpoliced | Out of scope by design: visibility, not confinement | Agent Sandbox for an identity and an isolation boundary the spans can carry; Agent Substrate above it for scheduling; neither does observability, so the questions still have to be answered |
+| Restricted store | Tail sampling decides at a fixed offset from a trace's first span, and an agent run outlives any window | Promotion after the trace is quiet, which made the Collector no longer the sole writer | Row policies on one table; a second pipeline keyed on a trace-level flag |
+| Content control | A deny-list of nine key patterns is a list someone maintains, and new content paths arrive with features | Masked by key pattern, recorded what was masked | An allow-list enforced by the pipeline and by the table schema; classification at the emitter |
+| Evaluation | Rule-based scores cannot judge relevance; the local 3B model was wrong while every outcome read `ok` | Kept small, scored separately in MLflow, joined on the trace id | An LLM judge from the start, on the same join |
+
+**Upstream.** The fourteen gaps this produced are in [CONTRIBUTIONS.md](CONTRIBUTIONS.md),
+each verified at the versions in the stack table below. One is a pull request this lab
+runs; the other thirteen are recorded and were not filed, may have been fixed since, and
+are open to anyone to file. Every finding along the way, in order and with the failures
+kept in, is in `LEARNINGS.md`, the author's working log, which stays private; references
+to it throughout this repository point there deliberately.
 
 The commands run on either of two environments, and everything that differs between them
 lives in `.env`: the three-node k3s cluster the guide was first built on, or a single VM
@@ -94,6 +156,7 @@ the Gateway, CloudNativePG and Prometheus the manifests expect. The
 | See what was found in the upstream tools | [CONTRIBUTIONS.md](CONTRIBUTIONS.md) |
 | Build it on this lab | [Lab environment](docs/lab-environment.md) and `make help` |
 | See every decision and its alternative | [Decisions](docs/decisions.md) |
+| Weigh this stack against what exists now | [Limitations and alternatives](docs/alternatives.md) |
 | Look at it: four UIs | OpenLIT (per-trace GenAI view), LiteLLM (keys, teams, guardrails), Perses (the dashboards and trace view), MLflow (evaluation runs). Hostnames in the [lab environment](docs/lab-environment.md) page |
 
 ## What this deliberately is not
@@ -103,13 +166,15 @@ the Gateway, CloudNativePG and Prometheus the manifests expect. The
 - **Not dependent on anything hosted.** The default model route is a self-hosted Ollama.
   An external OpenAI-compatible route is opt-in, added only when a key is present in `.env`.
 - **Not a sandbox.** Nothing here isolates execution. The subject is visibility, attribution
-  and access control, not confinement.
+  and access control, not confinement. Agent Sandbox and Agent Substrate are where that
+  work went in 2026; the [alternatives](docs/alternatives.md) page says what they change.
 - **Not airtight.** Reasonably secure and fully auditable, not hardened against a determined
   adversary.
 - **Not a production observability platform.** Single-node ClickHouse, node-pinned volumes,
   a lab's worth of hygiene. Where that would not do in an enterprise, the guide says so.
 - **No Tempo, Grafana or LangFlow**, by choice. ClickHouse is the trace store, OpenLIT the
-  per-trace UI, Perses the dashboards, MLflow the evaluation loop.
+  per-trace UI, Perses the dashboards, MLflow the evaluation loop. What each exclusion
+  cost, and what it would have saved, is on the [alternatives](docs/alternatives.md) page.
 
 
 ## Architecture
@@ -257,14 +322,14 @@ WHERE TraceId = '<trace id>' AND ParentSpanId != ''
 
 ```
 docs/guide/     the guide, one experiment per chapter, in reading order
-docs/           governance matrix, decisions, this lab's environment, the runbooks the tool server searches
+docs/           governance matrix, decisions, limitations and alternatives, this lab's environment, the runbooks the tool server searches
 deploy/         numbered manifests and Helm values; the numbering is the deployment order
 apps/workflow   the LangGraph triage workflow
 apps/mcp        the four MCP tool servers (one image, four Deployments)
 apps/perses     Perses with the contributed ClickHouse trace-query plugin
 scripts/        build, tagging, probes, the receipt, the evaluation loop and the drift check
 CONTRIBUTIONS.md  upstream gaps, and what was filed
-TODO.md         deferred work
+TODO.md         what was still open at the conclusion
 ```
 
 ## Licence
